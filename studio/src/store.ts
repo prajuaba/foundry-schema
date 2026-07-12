@@ -1,0 +1,892 @@
+import { create } from 'zustand';
+import { 
+  applyNodeChanges, 
+  applyEdgeChanges, 
+  addEdge,
+  type Edge, 
+  type OnNodesChange, 
+  type OnEdgesChange, 
+  type OnConnect 
+} from '@xyflow/react';
+import type { Entity, Property, Index, AppNode, ClassNode, EnumNode, CustomEndpoint } from './types';
+
+interface StoreState {
+  namespace: string;
+  nodes: AppNode[];
+  edges: Edge[];
+  activeTool: 'Association' | 'Composition' | 'Inheritance' | 'Select';
+
+  // React Flow actions
+  onNodesChange: OnNodesChange;
+  onEdgesChange: OnEdgesChange;
+  onConnect: OnConnect;
+
+  // Domain specific actions
+  setActiveTool: (tool: 'Association' | 'Composition' | 'Inheritance' | 'Select') => void;
+  setNamespace: (ns: string) => void;
+  addClassNode: (x: number, y: number) => void;
+  addEnumNode: (x: number, y: number) => void;
+  deleteNode: (nodeId: string) => void;
+  deleteEdge: (edgeId: string) => void;
+  updateClassNode: (nodeId: string, updatedData: Partial<Entity>) => void;
+  updateEnumNode: (nodeId: string, updatedData: { name: string; values: string[] }) => void;
+  updateProperty: (nodeId: string, propIndex: number, updatedProp: Partial<Property>) => void;
+  addProperty: (nodeId: string) => void;
+  deleteProperty: (nodeId: string, propIndex: number) => void;
+  addIndex: (nodeId: string) => void;
+  deleteIndex: (nodeId: string, indexIdx: number) => void;
+  updateIndex: (nodeId: string, indexIdx: number, fields: string[], unique: boolean) => void;
+
+  // Serialization & Deserialization
+  exportToSchema: () => any;
+  importFromSchema: (schema: any) => void;
+  
+  // Custom setter for bulk node/edge updates
+  setCanvasData: (nodes: AppNode[], edges: Edge[]) => void;
+
+  customEndpoints: CustomEndpoint[];
+  addCustomEndpoint: () => void;
+  updateCustomEndpoint: (index: number, updated: Partial<CustomEndpoint>) => void;
+  deleteCustomEndpoint: (index: number) => void;
+  exportToApiManifest: () => any;
+}
+
+export const useStore = create<StoreState>((set, get) => ({
+  namespace: 'Paperclip.OrderingSystem.Domain',
+  nodes: [],
+  edges: [],
+  activeTool: 'Select',
+  customEndpoints: [],
+
+  addCustomEndpoint: () => set((state) => ({
+    customEndpoints: [
+      ...state.customEndpoints,
+      { route: '/api/v1/custom-route', method: 'POST', requestType: 'CustomCommand', roles: ['Admin'] }
+    ]
+  })),
+
+  updateCustomEndpoint: (index, updated) => set((state) => {
+    const list = [...state.customEndpoints];
+    list[index] = { ...list[index], ...updated };
+    return { customEndpoints: list };
+  }),
+
+  deleteCustomEndpoint: (index) => set((state) => ({
+    customEndpoints: state.customEndpoints.filter((_, i) => i !== index)
+  })),
+
+  // React Flow actions
+  onNodesChange: (changes) => {
+    set((state) => ({
+      nodes: applyNodeChanges(changes, state.nodes) as AppNode[],
+    }));
+  },
+
+  onEdgesChange: (changes) => {
+    set((state) => {
+      let updatedNodes = [...state.nodes];
+      
+      // Intercept removed edges to perform property sync cleanup on keyboard delete
+      changes.forEach(change => {
+        if (change.type === 'remove') {
+          const edgeId = change.id;
+          const edge = state.edges.find(e => e.id === edgeId);
+          if (edge && edge.source && edge.target) {
+            const sourceNode = state.nodes.find(n => n.id === edge.source);
+            const targetNode = state.nodes.find(n => n.id === edge.target);
+            
+            if (sourceNode && targetNode && sourceNode.type === 'classNode') {
+              const targetName = targetNode.type === 'classNode'
+                ? (targetNode as ClassNode).data.entity.name
+                : (targetNode as EnumNode).data.enum.name;
+                
+              const relType = edge.data?.relationshipType;
+              
+              if (relType === 'Inheritance') {
+                updatedNodes = updatedNodes.map(node => {
+                  if (node.id === sourceNode.id && node.type === 'classNode') {
+                    const cn = node as ClassNode;
+                    return {
+                      ...cn,
+                      data: {
+                        ...cn.data,
+                        entity: {
+                          ...cn.data.entity,
+                          baseClass: undefined,
+                        }
+                      }
+                    } as AppNode;
+                  }
+                  return node;
+                });
+              } else if (relType === 'Composition') {
+                const propName = targetName.endsWith('s') ? `${targetName}List` : `${targetName}s`;
+                updatedNodes = updatedNodes.map(node => {
+                  if (node.id === sourceNode.id && node.type === 'classNode') {
+                    const cn = node as ClassNode;
+                    return {
+                      ...cn,
+                      data: {
+                        ...cn.data,
+                        entity: {
+                          ...cn.data.entity,
+                          properties: cn.data.entity.properties.filter(p => p.name !== propName),
+                        }
+                      }
+                    } as AppNode;
+                  }
+                  return node;
+                });
+              } else if (relType === 'Association') {
+                const isEnum = targetNode.type === 'enumNode';
+                const propName = isEnum ? targetName : `${targetName}Id`;
+                updatedNodes = updatedNodes.map(node => {
+                  if (node.id === sourceNode.id && node.type === 'classNode') {
+                    const cn = node as ClassNode;
+                    return {
+                      ...cn,
+                      data: {
+                        ...cn.data,
+                        entity: {
+                          ...cn.data.entity,
+                          properties: cn.data.entity.properties.filter(p => p.name !== propName),
+                        }
+                      }
+                    } as AppNode;
+                  }
+                  return node;
+                });
+              }
+            }
+          }
+        }
+      });
+      
+      return {
+        nodes: updatedNodes,
+        edges: applyEdgeChanges(changes, state.edges) as Edge[],
+      };
+    });
+  },
+
+  onConnect: (connection) => {
+    set((state) => {
+      const sourceNode = state.nodes.find(n => n.id === connection.source);
+      const targetNode = state.nodes.find(n => n.id === connection.target);
+      
+      let updatedNodes = [...state.nodes];
+      
+      if (sourceNode && targetNode && sourceNode.type === 'classNode') {
+        const targetName = targetNode.type === 'classNode' 
+          ? (targetNode as ClassNode).data.entity.name 
+          : (targetNode as EnumNode).data.enum.name;
+        
+        if (state.activeTool === 'Inheritance') {
+          // Update base class
+          updatedNodes = state.nodes.map(node => {
+            if (node.id === sourceNode.id && node.type === 'classNode') {
+              const cn = node as ClassNode;
+              return {
+                ...cn,
+                data: {
+                  ...cn.data,
+                  entity: {
+                    ...cn.data.entity,
+                    baseClass: targetName,
+                  }
+                }
+              } as AppNode;
+            }
+            return node;
+          });
+        } else if (state.activeTool === 'Composition') {
+          // Add List<TargetName> property
+          const propName = targetName.endsWith('s') ? `${targetName}List` : `${targetName}s`;
+          const newProp: Property = {
+            name: propName,
+            type: `List<${targetName}>`,
+            isKey: false,
+            isEnum: false,
+            attributes: [],
+          };
+          
+          updatedNodes = state.nodes.map(node => {
+            if (node.id === sourceNode.id && node.type === 'classNode') {
+              const cn = node as ClassNode;
+              if (cn.data.entity.properties.some(p => p.name === propName)) {
+                return cn;
+              }
+              return {
+                ...cn,
+                data: {
+                  ...cn.data,
+                  entity: {
+                    ...cn.data.entity,
+                    properties: [...cn.data.entity.properties, newProp],
+                  }
+                }
+              } as AppNode;
+            }
+            return node;
+          });
+        } else if (state.activeTool === 'Association') {
+          // Add targetNameId property of type ObjectId (or if the target is an enum, targetName of type targetName)
+          const isEnum = targetNode.type === 'enumNode';
+          const propName = isEnum ? targetName : `${targetName}Id`;
+          const propType = isEnum ? targetName : 'ObjectId';
+          
+          const newProp: Property = {
+            name: propName,
+            type: propType,
+            isKey: false,
+            isEnum: isEnum,
+            attributes: isEnum ? [] : ['Index'],
+          };
+          
+          updatedNodes = state.nodes.map(node => {
+            if (node.id === sourceNode.id && node.type === 'classNode') {
+              const cn = node as ClassNode;
+              if (cn.data.entity.properties.some(p => p.name === propName)) {
+                return cn;
+              }
+              return {
+                ...cn,
+                data: {
+                  ...cn.data,
+                  entity: {
+                    ...cn.data.entity,
+                    properties: [...cn.data.entity.properties, newProp],
+                  }
+                }
+              } as AppNode;
+            }
+            return node;
+          });
+        }
+      }
+      
+      const newEdge = {
+        ...connection,
+        type: 'orthogonal',
+        data: { relationshipType: state.activeTool },
+        style: { strokeWidth: 2, stroke: '#475569' },
+      };
+      
+      return {
+        nodes: updatedNodes,
+        edges: addEdge(newEdge, state.edges),
+      };
+    });
+  },
+
+  // Domain specific actions
+  setActiveTool: (tool) => set({ activeTool: tool }),
+  setNamespace: (ns) => set({ namespace: ns }),
+
+  addClassNode: (x, y) =>
+    set((state) => ({
+      nodes: [
+        ...state.nodes,
+        {
+          id: `class-${Date.now()}`,
+          type: 'classNode',
+          position: { x, y },
+          data: {
+            entity: {
+              name: 'NewClass',
+              softDelete: false,
+              auditable: false,
+              indexes: [],
+              properties: [],
+              apiEnabledMethods: ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'],
+              apiRoles: {
+                'GET': ['Admin', 'User'],
+                'GET_BY_ID': ['Admin', 'User'],
+                'POST': ['Admin'],
+                'PUT': ['Admin'],
+                'DELETE': ['Admin']
+              },
+              apiCaching: {
+                'GET': { enabled: false, ttlSeconds: 60 },
+                'GET_BY_ID': { enabled: false, ttlSeconds: 120 }
+              }
+            },
+          },
+        } as ClassNode,
+      ],
+    })),
+
+  addEnumNode: (x, y) =>
+    set((state) => ({
+      nodes: [
+        ...state.nodes,
+        {
+          id: `enum-${Date.now()}`,
+          type: 'enumNode',
+          position: { x, y },
+          data: {
+            enum: {
+              name: 'NewEnum',
+              values: [],
+            },
+          },
+        } as EnumNode,
+      ],
+    })),
+
+  deleteNode: (nodeId) =>
+    set((state) => ({
+      nodes: state.nodes.filter((node) => node.id !== nodeId),
+      edges: state.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId
+      ),
+    })),
+
+  deleteEdge: (edgeId) =>
+    set((state) => {
+      const edge = state.edges.find(e => e.id === edgeId);
+      let updatedNodes = [...state.nodes];
+      
+      if (edge && edge.source && edge.target) {
+        const sourceNode = state.nodes.find(n => n.id === edge.source);
+        const targetNode = state.nodes.find(n => n.id === edge.target);
+        
+        if (sourceNode && targetNode && sourceNode.type === 'classNode') {
+          const targetName = targetNode.type === 'classNode'
+            ? (targetNode as ClassNode).data.entity.name
+            : (targetNode as EnumNode).data.enum.name;
+            
+          const relType = edge.data?.relationshipType;
+          
+          if (relType === 'Inheritance') {
+            updatedNodes = state.nodes.map(node => {
+              if (node.id === sourceNode.id && node.type === 'classNode') {
+                const cn = node as ClassNode;
+                return {
+                  ...cn,
+                  data: {
+                    ...cn.data,
+                    entity: {
+                      ...cn.data.entity,
+                      baseClass: undefined,
+                    }
+                  }
+                } as AppNode;
+              }
+              return node;
+            });
+          } else if (relType === 'Composition') {
+            const propName = targetName.endsWith('s') ? `${targetName}List` : `${targetName}s`;
+            updatedNodes = state.nodes.map(node => {
+              if (node.id === sourceNode.id && node.type === 'classNode') {
+                const cn = node as ClassNode;
+                return {
+                  ...cn,
+                  data: {
+                    ...cn.data,
+                    entity: {
+                      ...cn.data.entity,
+                      properties: cn.data.entity.properties.filter(p => p.name !== propName),
+                    }
+                  }
+                } as AppNode;
+              }
+              return node;
+            });
+          } else if (relType === 'Association') {
+            const isEnum = targetNode.type === 'enumNode';
+            const propName = isEnum ? targetName : `${targetName}Id`;
+            updatedNodes = state.nodes.map(node => {
+              if (node.id === sourceNode.id && node.type === 'classNode') {
+                const cn = node as ClassNode;
+                return {
+                  ...cn,
+                  data: {
+                    ...cn.data,
+                    entity: {
+                      ...cn.data.entity,
+                      properties: cn.data.entity.properties.filter(p => p.name !== propName),
+                    }
+                  }
+                } as AppNode;
+              }
+              return node;
+            });
+          }
+        }
+      }
+      
+      return {
+        nodes: updatedNodes,
+        edges: state.edges.filter((e) => e.id !== edgeId),
+      };
+    }),
+
+  updateClassNode: (nodeId, updatedData) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: { ...classNode.data.entity, ...updatedData },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  updateEnumNode: (nodeId, updatedData) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'enumNode') {
+          const enumNode = node as EnumNode;
+          return {
+            ...enumNode,
+            data: {
+              ...enumNode.data,
+              enum: { ...enumNode.data.enum, ...updatedData },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  updateProperty: (nodeId, propIndex, updatedProp) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const properties = [...classNode.data.entity.properties];
+          properties[propIndex] = { ...properties[propIndex], ...updatedProp };
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                properties,
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  addProperty: (nodeId) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const newProp: Property = {
+            name: 'NewProperty',
+            type: 'string',
+            isKey: false,
+            isEnum: false,
+            attributes: [],
+          };
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                properties: [...classNode.data.entity.properties, newProp],
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  deleteProperty: (nodeId, propIndex) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const properties = [...classNode.data.entity.properties];
+          properties.splice(propIndex, 1);
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                properties,
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  addIndex: (nodeId) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const newIndex: Index = {
+            fields: [],
+            unique: false,
+          };
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                indexes: [...classNode.data.entity.indexes, newIndex],
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  deleteIndex: (nodeId, indexIdx) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const indexes = [...classNode.data.entity.indexes];
+          indexes.splice(indexIdx, 1);
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                indexes,
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  updateIndex: (nodeId, indexIdx, fields, unique) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId && node.type === 'classNode') {
+          const classNode = node as ClassNode;
+          const indexes = [...classNode.data.entity.indexes];
+          indexes[indexIdx] = { ...indexes[indexIdx], fields, unique };
+          return {
+            ...classNode,
+            data: {
+              ...classNode.data,
+              entity: {
+                ...classNode.data.entity,
+                indexes,
+              },
+            },
+          } as AppNode;
+        }
+        return node;
+      }),
+    })),
+
+  // Serialization
+  exportToSchema: () => {
+    const { nodes, namespace } = get();
+    const entities: any[] = [];
+    const enums: any[] = [];
+
+    nodes.forEach((node) => {
+      if (node.type === 'classNode') {
+        const classNode = node as ClassNode;
+        const entity = classNode.data.entity;
+        entities.push({
+          Name: entity.name,
+          BaseClass: entity.baseClass || null,
+          SoftDelete: entity.softDelete,
+          Auditable: entity.auditable,
+          Indexes: entity.indexes.map((index) => ({
+            Fields: index.fields,
+            Unique: index.unique,
+          })),
+          Properties: entity.properties.map((prop) => ({
+            Name: prop.name,
+            Type: prop.type,
+            IsKey: prop.isKey,
+            IsEnum: prop.isEnum,
+            Attributes: prop.attributes,
+          })),
+          ApiEnabledMethods: entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'],
+          ApiRoles: entity.apiRoles || {},
+          ApiCaching: entity.apiCaching || {},
+        });
+      } else if (node.type === 'enumNode') {
+        const enumNode = node as EnumNode;
+        const enumData = enumNode.data.enum;
+        enums.push({
+          Name: enumData.name,
+          Values: enumData.values,
+        });
+      }
+    });
+
+    return {
+      Namespace: namespace,
+      Entities: entities,
+      Enums: enums,
+      CustomEndpoints: get().customEndpoints.map(e => ({
+        Route: e.route,
+        Method: e.method,
+        RequestType: e.requestType,
+        Roles: e.roles
+      })),
+    };
+  },
+
+  exportToApiManifest: () => {
+    const { nodes, namespace, customEndpoints } = get();
+    const endpoints: any[] = [];
+
+    const pluralize = (word: string): string => {
+      if (!word) return word;
+      const lower = word.toLowerCase();
+      if (lower.endsWith('y') && !['ay', 'ey', 'iy', 'oy', 'uy'].some(v => lower.endsWith(v))) {
+        return word.slice(0, -1) + 'ies';
+      }
+      if (['s', 'x', 'z', 'ch', 'sh'].some(suffix => lower.endsWith(suffix))) {
+        return word + 'es';
+      }
+      return word + 's';
+    };
+
+    nodes.forEach((node) => {
+      if (node.type === 'classNode') {
+        const entity = (node as ClassNode).data.entity;
+        const enabledMethods = entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'];
+        
+        // Proper pluralization for route paths
+        const routeName = pluralize(entity.name).toLowerCase();
+        const route = `/api/v1/${routeName}`;
+
+        const roles: Record<string, string[]> = {};
+        const caching: Record<string, any> = {};
+
+        enabledMethods.forEach((method) => {
+          if (entity.apiRoles && entity.apiRoles[method]) {
+            roles[method] = entity.apiRoles[method];
+          }
+          if (entity.apiCaching && entity.apiCaching[method] && entity.apiCaching[method].enabled) {
+            caching[method] = {
+              Enabled: true,
+              TtlSeconds: entity.apiCaching[method].ttlSeconds
+            };
+          }
+        });
+
+        endpoints.push({
+          Route: route,
+          Entity: entity.name,
+          Methods: enabledMethods,
+          Roles: roles,
+          Caching: Object.keys(caching).length > 0 ? caching : undefined
+        });
+      }
+    });
+
+    return {
+      Namespace: namespace,
+      Endpoints: endpoints,
+      CustomEndpoints: customEndpoints.map(e => ({
+        Route: e.route,
+        Method: e.method,
+        RequestType: e.requestType,
+        Roles: e.roles
+      }))
+    };
+  },
+
+  importFromSchema: (schema) => {
+    const namespace = schema.Namespace || schema.namespace || 'Paperclip.OrderingSystem.Domain';
+    const entities = schema.Entities || schema.entities || [];
+    const enums = schema.Enums || schema.enums || [];
+    
+    const existingNodes = get().nodes;
+    const newNodes: AppNode[] = [];
+    const newEdges: Edge[] = [];
+    
+    // Track existing positions to preserve layout
+    const positionMap = new Map<string, { x: number, y: number }>();
+    existingNodes.forEach(node => {
+      const name = node.type === 'classNode' 
+        ? (node as ClassNode).data.entity.name 
+        : (node as EnumNode).data.enum.name;
+      positionMap.set(name, node.position);
+    });
+    
+    let currentX = 100;
+    let currentY = 100;
+    
+    const getNodePosition = (name: string) => {
+      if (positionMap.has(name)) {
+        return positionMap.get(name)!;
+      }
+      const pos = { x: currentX, y: currentY };
+      currentX += 280;
+      if (currentX > 900) {
+        currentX = 100;
+        currentY += 300;
+      }
+      return pos;
+    };
+    
+    // Map entities to ClassNodes
+    entities.forEach((entity: any) => {
+      const name = entity.Name || entity.name;
+      const position = getNodePosition(name);
+      
+      const properties: Property[] = (entity.Properties || entity.properties || []).map((p: any) => ({
+        name: p.Name || p.name,
+        type: p.Type || p.type,
+        isKey: p.IsKey || p.isKey || false,
+        isEnum: p.IsEnum || p.isEnum || false,
+        attributes: p.Attributes || p.attributes || [],
+      }));
+      
+      const indexes: Index[] = (entity.Indexes || entity.indexes || []).map((idx: any) => ({
+        fields: idx.Fields || idx.fields || [],
+        unique: idx.Unique || idx.unique || false,
+      }));
+      
+      const apiEnabledMethods = entity.ApiEnabledMethods || entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'];
+      const apiRoles = entity.ApiRoles || entity.apiRoles || {
+        'GET': ['Admin', 'User'],
+        'GET_BY_ID': ['Admin', 'User'],
+        'POST': ['Admin'],
+        'PUT': ['Admin'],
+        'DELETE': ['Admin']
+      };
+      const apiCaching = entity.ApiCaching || entity.apiCaching || {
+        'GET': { enabled: false, ttlSeconds: 60 },
+        'GET_BY_ID': { enabled: false, ttlSeconds: 120 }
+      };
+
+      newNodes.push({
+        id: `class-${name}`,
+        type: 'classNode',
+        position,
+        data: {
+          entity: {
+            name,
+            baseClass: entity.BaseClass || entity.baseClass || undefined,
+            softDelete: entity.SoftDelete || entity.softDelete || false,
+            auditable: entity.Auditable || entity.auditable || false,
+            properties,
+            indexes,
+            apiEnabledMethods,
+            apiRoles,
+            apiCaching
+          }
+        }
+      } as ClassNode);
+    });
+    
+    // Map enums to EnumNodes
+    enums.forEach((en: any) => {
+      const name = en.Name || en.name;
+      const position = getNodePosition(name);
+      
+      newNodes.push({
+        id: `enum-${name}`,
+        type: 'enumNode',
+        position,
+        data: {
+          enum: {
+            name,
+            values: en.Values || en.values || [],
+          }
+        }
+      } as EnumNode);
+    });
+    
+    // Recreate edges from relations
+    newNodes.forEach((node) => {
+      if (node.type === 'classNode') {
+        const classNode = node as ClassNode;
+        const entity = classNode.data.entity;
+        
+        // 1. Inheritance edges
+        if (entity.baseClass) {
+          const parentNode = newNodes.find(n => 
+            n.type === 'classNode' && (n as ClassNode).data.entity.name === entity.baseClass
+          );
+          if (parentNode) {
+            newEdges.push({
+              id: `edge-${node.id}-to-${parentNode.id}`,
+              source: node.id,
+              target: parentNode.id,
+              type: 'orthogonal',
+              data: { relationshipType: 'Inheritance' },
+              style: { strokeWidth: 2, stroke: '#475569' },
+            });
+          }
+        }
+        
+        // 2. Composition / Association edges
+        entity.properties.forEach(prop => {
+          let targetType = prop.type;
+          let isComposition = false;
+          
+          if (targetType.startsWith('List<') && targetType.endsWith('>')) {
+            targetType = targetType.substring(5, targetType.length - 1);
+            isComposition = true;
+          }
+          
+          let targetNodeName = targetType;
+          if (prop.type === 'ObjectId' && prop.name.endsWith('Id')) {
+            targetNodeName = prop.name.substring(0, prop.name.length - 2);
+          }
+          
+          const targetNode = newNodes.find(n => {
+            const name = n.type === 'classNode' 
+              ? (n as ClassNode).data.entity.name 
+              : (n as EnumNode).data.enum.name;
+            return name.toLowerCase() === targetNodeName.toLowerCase();
+          });
+          
+          if (targetNode) {
+            const relType = isComposition ? 'Composition' : 'Association';
+            newEdges.push({
+              id: `edge-${node.id}-to-${targetNode.id}-${prop.name}`,
+              source: node.id,
+              target: targetNode.id,
+              type: 'orthogonal',
+              data: { relationshipType: relType },
+              style: { strokeWidth: 2, stroke: '#475569' },
+            });
+          }
+        });
+      }
+    });
+
+    const customEndpointsImported = (schema.CustomEndpoints || schema.customEndpoints || []).map((e: any) => ({
+      route: e.Route || e.route || '/api/v1/custom',
+      method: e.Method || e.method || 'POST',
+      requestType: e.RequestType || e.requestType || 'CustomCommand',
+      roles: e.Roles || e.roles || ['Admin']
+    }));
+    
+    set({
+      namespace,
+      nodes: newNodes,
+      edges: newEdges,
+      customEndpoints: customEndpointsImported
+    });
+  },
+
+  setCanvasData: (nodes, edges) => set({ nodes, edges }),
+}));
