@@ -83,6 +83,8 @@ export interface WorkflowState {
   isInitial: boolean;
   isFinal: boolean;
   allowedRoles: string[];
+  x?: number;
+  y?: number;
 }
 
 export interface PropertyComparisonCondition {
@@ -132,6 +134,8 @@ export interface WorkflowChoiceNode {
   name: string;
   branches: WorkflowChoiceBranch[];
   defaultState: string;
+  x?: number;
+  y?: number;
 }
 
 export interface WorkflowDefinition {

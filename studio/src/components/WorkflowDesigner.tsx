@@ -1,32 +1,163 @@
-import React, { useState, useMemo } from 'react';
-import { useStore } from '../store';
-import type { WorkflowDefinition, WorkflowState, WorkflowTransition, WorkflowCondition, WorkflowAction, InternalApiAction, ExternalApiAction, WorkflowChoiceNode, WorkflowChoiceBranch } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Plus, Trash2, Shield, Settings, ArrowRight, GitMerge,
+  ReactFlow, 
+  Controls, 
+  Background, 
+  MiniMap,
+  Handle,
+  Position,
+  MarkerType,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeTypes
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { useStore } from '../store';
+import type { 
+  WorkflowDefinition, WorkflowState, WorkflowTransition, 
+  WorkflowCondition, WorkflowAction, InternalApiAction, 
+  ExternalApiAction, WorkflowChoiceNode, WorkflowChoiceBranch 
+} from '../types';
+import { 
+  Plus, Trash2, Shield, Settings, GitMerge,
   Layers, Cpu
 } from 'lucide-react';
 
+// Custom Node Components
+const StateNodeComponent: React.FC<{ data: any; selected: boolean }> = ({ data, selected }) => {
+  return (
+    <div className={`p-4 rounded-xl border bg-slate-900 shadow-md min-w-[160px] text-xs flex flex-col gap-2 transition-all ${
+      selected ? 'border-sky-500 shadow-lg shadow-sky-500/10' : 'border-slate-800 hover:border-slate-700'
+    }`}>
+      {/* Target handle on top and left */}
+      <Handle type="target" position={Position.Top} className="!bg-slate-600 !w-2 !h-2" />
+      <Handle type="target" position={Position.Left} className="!bg-slate-600 !w-2 !h-2" />
+      
+      <div className="flex justify-between items-center gap-2">
+        <span className="font-semibold text-slate-100 truncate">{data.label}</span>
+      </div>
+
+      <div className="flex gap-1.5 mt-0.5">
+        {data.isInitial && (
+          <span className="text-[8px] font-bold px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 rounded uppercase">
+            Initial
+          </span>
+        )}
+        {data.isFinal && (
+          <span className="text-[8px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 rounded uppercase">
+            Final
+          </span>
+        )}
+      </div>
+
+      <div className="text-[9px] text-slate-400 border-t border-slate-800/80 pt-1.5 mt-0.5 flex items-center gap-1.5">
+        <Shield className="w-3 h-3 text-slate-500" />
+        <span className="truncate">Roles: {data.allowedRoles?.join(', ') || 'None'}</span>
+      </div>
+
+      {/* Source handle on bottom and right */}
+      <Handle type="source" position={Position.Bottom} className="!bg-slate-600 !w-2 !h-2" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-600 !w-2 !h-2" />
+    </div>
+  );
+};
+
+const ChoiceNodeComponent: React.FC<{ data: any; selected: boolean }> = ({ data, selected }) => {
+  return (
+    <div className={`p-4 rounded-xl border bg-slate-950 shadow-md min-w-[160px] text-xs flex flex-col gap-2 transition-all ${
+      selected ? 'border-amber-500 shadow-lg shadow-amber-500/10' : 'border-slate-800 hover:border-slate-700'
+    }`}>
+      {/* Target handle on top and left */}
+      <Handle type="target" position={Position.Top} className="!bg-slate-600 !w-2 !h-2" />
+      <Handle type="target" position={Position.Left} className="!bg-slate-600 !w-2 !h-2" />
+
+      <div className="flex items-center gap-1.5 font-semibold text-amber-400">
+        <GitMerge className="w-4 h-4" />
+        <span className="truncate">{data.label}</span>
+      </div>
+      
+      <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/25 rounded uppercase w-max">
+        Decision Gate
+      </span>
+
+      <div className="text-[9px] text-slate-400 border-t border-slate-800/80 pt-1.5 mt-0.5 flex justify-between">
+        <span>Branches: {data.branchesCount}</span>
+        <span className="font-mono text-slate-500">Else: {data.defaultState || 'None'}</span>
+      </div>
+
+      {/* Source handle on bottom and right */}
+      <Handle type="source" position={Position.Bottom} className="!bg-slate-600 !w-2 !h-2" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-600 !w-2 !h-2" />
+    </div>
+  );
+};
+
+const nodeTypes: NodeTypes = {
+  stateNode: StateNodeComponent,
+  choiceNode: ChoiceNodeComponent
+};
+
 export const WorkflowDesigner: React.FC = () => {
   const { 
-    workflows, addWorkflow, updateWorkflow, deleteWorkflow, nodes 
+    workflows, addWorkflow, updateWorkflow, deleteWorkflow, nodes: domainNodes 
   } = useStore();
 
   const [selectedWorkflowIndex, setSelectedWorkflowIndex] = useState<number>(-1);
   const [selectedStateIndex, setSelectedStateIndex] = useState<number>(-1);
   const [selectedTransitionIndex, setSelectedTransitionIndex] = useState<number>(-1);
   const [selectedChoiceNodeIndex, setSelectedChoiceNodeIndex] = useState<number>(-1);
-  
-  const [isLinking, setIsLinking] = useState<boolean>(false);
-  const [linkSourceNode, setLinkSourceNode] = useState<string>('');
+
+  const selectedWorkflow = selectedWorkflowIndex >= 0 ? workflows[selectedWorkflowIndex] : null;
+
+  // React Flow Local Nodes & Edges
+  const [flowNodes, setFlowNodes] = useState<Node[]>([]);
+  const [flowEdges, setFlowEdges] = useState<Edge[]>([]);
+
+  // Sync React Flow nodes & edges with Zustand state
+  useEffect(() => {
+    if (!selectedWorkflow) {
+      setFlowNodes([]);
+      setFlowEdges([]);
+      return;
+    }
+
+    const newNodes: Node[] = [
+      ...selectedWorkflow.states.map((s, idx) => ({
+        id: s.name,
+        type: 'stateNode',
+        position: { x: s.x ?? (150 + idx * 240), y: s.y ?? 100 },
+        data: { label: s.name, isInitial: s.isInitial, isFinal: s.isFinal, allowedRoles: s.allowedRoles },
+      })),
+      ...(selectedWorkflow.choiceNodes || []).map((c, idx) => ({
+        id: c.id,
+        type: 'choiceNode',
+        position: { x: c.x ?? (150 + idx * 240), y: c.y ?? 280 },
+        data: { label: c.name, branchesCount: (c.branches || []).length, defaultState: c.defaultState },
+      }))
+    ];
+
+    const newEdges: Edge[] = selectedWorkflow.transitions.map(t => ({
+      id: t.id,
+      source: t.fromState,
+      target: t.toState,
+      label: t.name || t.trigger,
+      type: 'smoothstep',
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#38bdf8' },
+      style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+      labelStyle: { fill: '#94a3b8', fontSize: '9px', fontFamily: 'monospace' }
+    }));
+
+    setFlowNodes(newNodes);
+    setFlowEdges(newEdges);
+  }, [selectedWorkflowIndex, selectedWorkflow?.states, selectedWorkflow?.choiceNodes, selectedWorkflow?.transitions]);
 
   // Extract all entity names from class nodes on the canvas
   const availableEntities = useMemo(() => {
-    return nodes
+    return domainNodes
       .filter(n => n.type === 'classNode')
       .map(n => n.data.entity.name);
-  }, [nodes]);
-
-  const selectedWorkflow = selectedWorkflowIndex >= 0 ? workflows[selectedWorkflowIndex] : null;
+  }, [domainNodes]);
 
   const handleUpdateSelectedWorkflow = (updated: Partial<WorkflowDefinition>) => {
     if (selectedWorkflowIndex >= 0) {
@@ -34,7 +165,7 @@ export const WorkflowDesigner: React.FC = () => {
     }
   };
 
-  // Add State to Selected Workflow
+  // Add State
   const handleAddState = () => {
     if (!selectedWorkflow) return;
     const name = `State_${selectedWorkflow.states.length + 1}`;
@@ -42,14 +173,13 @@ export const WorkflowDesigner: React.FC = () => {
       name,
       isInitial: selectedWorkflow.states.length === 0,
       isFinal: false,
-      allowedRoles: ['Admin']
+      allowedRoles: ['Admin'],
+      x: 100 + Math.random() * 80,
+      y: 100 + Math.random() * 80
     };
     handleUpdateSelectedWorkflow({
       states: [...selectedWorkflow.states, newState]
     });
-    setSelectedStateIndex(selectedWorkflow.states.length);
-    setSelectedTransitionIndex(-1);
-    setSelectedChoiceNodeIndex(-1);
   };
 
   // Add Decision Gate (Choice Node)
@@ -57,81 +187,90 @@ export const WorkflowDesigner: React.FC = () => {
     if (!selectedWorkflow) return;
     const name = `Check_Gate_${(selectedWorkflow.choiceNodes || []).length + 1}`;
     const newChoice: WorkflowChoiceNode = {
-      id: name.toLowerCase(),
+      id: name.toLowerCase().replace(/\s+/g, '_'),
       name,
       branches: [],
-      defaultState: selectedWorkflow.states[0]?.name || ''
+      defaultState: selectedWorkflow.states[0]?.name || '',
+      x: 100 + Math.random() * 80,
+      y: 200 + Math.random() * 80
     };
     handleUpdateSelectedWorkflow({
       choiceNodes: [...(selectedWorkflow.choiceNodes || []), newChoice]
     });
-    setSelectedChoiceNodeIndex((selectedWorkflow.choiceNodes || []).length);
-    setSelectedStateIndex(-1);
-    setSelectedTransitionIndex(-1);
   };
 
-  // Delete State from Selected Workflow
+  // Delete Selected State
   const handleDeleteState = (stateIndex: number) => {
     if (!selectedWorkflow) return;
     const stateName = selectedWorkflow.states[stateIndex].name;
     const states = selectedWorkflow.states.filter((_, idx) => idx !== stateIndex);
-    
-    // Also clean up any transitions referencing this state
     const transitions = selectedWorkflow.transitions.filter(
       t => t.fromState !== stateName && t.toState !== stateName
     );
-
     handleUpdateSelectedWorkflow({ states, transitions });
     setSelectedStateIndex(-1);
-    setSelectedTransitionIndex(-1);
-    setSelectedChoiceNodeIndex(-1);
   };
 
-  // Delete Choice Node
+  // Delete Selected Choice Node
   const handleDeleteChoiceNode = (choiceIndex: number) => {
     if (!selectedWorkflow) return;
     const choice = selectedWorkflow.choiceNodes[choiceIndex];
     const choiceNodes = selectedWorkflow.choiceNodes.filter((_, idx) => idx !== choiceIndex);
-    
-    // Clean up references in transitions
     const transitions = selectedWorkflow.transitions.filter(
       t => t.fromState !== choice.id && t.toState !== choice.id
     );
-
     handleUpdateSelectedWorkflow({ choiceNodes, transitions });
     setSelectedChoiceNodeIndex(-1);
+  };
+
+  // Delete Selected Transition Edge
+  const handleDeleteTransition = (transIndex: number) => {
+    if (!selectedWorkflow) return;
+    const transitions = selectedWorkflow.transitions.filter((_, idx) => idx !== transIndex);
+    handleUpdateSelectedWorkflow({ transitions });
     setSelectedTransitionIndex(-1);
-    setSelectedStateIndex(-1);
   };
 
-  // Start transition link mode
-  const startTransitionLink = (nodeId: string) => {
-    setIsLinking(true);
-    setLinkSourceNode(nodeId);
-  };
-
-  // Complete transition link mode
-  const completeTransitionLink = (targetNodeId: string) => {
-    if (!selectedWorkflow || !linkSourceNode || linkSourceNode === targetNodeId) {
-      setIsLinking(false);
-      setLinkSourceNode('');
-      return;
+  // Drag stop: Update positions in store
+  const onNodeDragStop = (_event: any, node: Node) => {
+    if (!selectedWorkflow) return;
+    if (node.type === 'stateNode') {
+      const states = selectedWorkflow.states.map(s => {
+        if (s.name === node.id) {
+          return { ...s, x: Math.round(node.position.x), y: Math.round(node.position.y) };
+        }
+        return s;
+      });
+      handleUpdateSelectedWorkflow({ states });
+    } else if (node.type === 'choiceNode') {
+      const choiceNodes = selectedWorkflow.choiceNodes.map(c => {
+        if (c.id === node.id) {
+          return { ...c, x: Math.round(node.position.x), y: Math.round(node.position.y) };
+        }
+        return c;
+      });
+      handleUpdateSelectedWorkflow({ choiceNodes });
     }
+  };
 
-    const transitionId = `${linkSourceNode.toLowerCase()}_to_${targetNodeId.toLowerCase()}`;
-    // Check if transition already exists
-    if (selectedWorkflow.transitions.some(t => t.fromState === linkSourceNode && t.toState === targetNodeId)) {
-      setIsLinking(false);
-      setLinkSourceNode('');
+  // Handle visual connections -> transition stubs
+  const onConnect = (connection: Connection) => {
+    if (!selectedWorkflow) return;
+    const fromState = connection.source;
+    const toState = connection.target;
+    if (!fromState || !toState) return;
+
+    const transitionId = `${fromState.toLowerCase()}_to_${toState.toLowerCase()}`;
+    if (selectedWorkflow.transitions.some(t => t.fromState === fromState && t.toState === toState)) {
       return;
     }
 
     const newTransition: WorkflowTransition = {
       id: transitionId,
-      name: `Transition to ${targetNodeId}`,
-      fromState: linkSourceNode,
-      toState: targetNodeId,
-      trigger: `${linkSourceNode}To${targetNodeId}Command`,
+      name: `Transition to ${toState}`,
+      fromState,
+      toState,
+      trigger: `${fromState}To${toState}Command`,
       useCustomCommand: false,
       requiredRoles: ['Admin'],
       conditions: [],
@@ -141,20 +280,31 @@ export const WorkflowDesigner: React.FC = () => {
     handleUpdateSelectedWorkflow({
       transitions: [...selectedWorkflow.transitions, newTransition]
     });
-
-    setSelectedTransitionIndex(selectedWorkflow.transitions.length);
-    setSelectedStateIndex(-1);
-    setSelectedChoiceNodeIndex(-1);
-    setIsLinking(false);
-    setLinkSourceNode('');
   };
 
-  // Delete Transition
-  const handleDeleteTransition = (transIndex: number) => {
+  // selection click handlers
+  const onSelectionChange = (params: { nodes: Node[]; edges: Edge[] }) => {
     if (!selectedWorkflow) return;
-    const transitions = selectedWorkflow.transitions.filter((_, idx) => idx !== transIndex);
-    handleUpdateSelectedWorkflow({ transitions });
-    setSelectedTransitionIndex(-1);
+    if (params.nodes.length > 0) {
+      const node = params.nodes[0];
+      if (node.type === 'stateNode') {
+        const idx = selectedWorkflow.states.findIndex(s => s.name === node.id);
+        setSelectedStateIndex(idx);
+        setSelectedChoiceNodeIndex(-1);
+        setSelectedTransitionIndex(-1);
+      } else if (node.type === 'choiceNode') {
+        const idx = selectedWorkflow.choiceNodes.findIndex(c => c.id === node.id);
+        setSelectedChoiceNodeIndex(idx);
+        setSelectedStateIndex(-1);
+        setSelectedTransitionIndex(-1);
+      }
+    } else if (params.edges.length > 0) {
+      const edge = params.edges[0];
+      const idx = selectedWorkflow.transitions.findIndex(t => t.id === edge.id);
+      setSelectedTransitionIndex(idx);
+      setSelectedStateIndex(-1);
+      setSelectedChoiceNodeIndex(-1);
+    }
   };
 
   return (
@@ -221,7 +371,7 @@ export const WorkflowDesigner: React.FC = () => {
         </div>
       </div>
 
-      {/* Center Panel - Diagram/State Canvas & Configuration */}
+      {/* Center Panel - UML Diagram Canvas */}
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-900/60 relative">
         {selectedWorkflow ? (
           <>
@@ -282,217 +432,50 @@ export const WorkflowDesigner: React.FC = () => {
               </div>
             </div>
 
-            {/* Interactive State Diagram Grid */}
-            <div className="flex-1 p-6 overflow-y-auto relative bg-slate-950/20 flex flex-col gap-6">
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-slate-500 font-mono">
-                  {isLinking ? (
-                    <span className="text-amber-400 font-bold animate-pulse">
-                      Linking node "{linkSourceNode}"... click target state/choice node card below to map transition
-                    </span>
-                  ) : (
-                    'Configure workflow states and automated decision choice gates.'
-                  )}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleAddState}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold shadow-md shadow-sky-600/10 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add State</span>
-                  </button>
-                  <button
-                    onClick={handleAddChoiceNode}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold shadow-md shadow-amber-600/10 cursor-pointer"
-                  >
-                    <GitMerge className="w-3.5 h-3.5" />
-                    <span>Add Decision Gate</span>
-                  </button>
-                </div>
+            {/* Interactive Canvas Controls */}
+            <div className="p-3 bg-slate-950/10 border-b border-slate-800/40 flex justify-between items-center px-6">
+              <span className="text-xs text-slate-500">
+                Drag handles to connect states. Drag nodes to layout the diagram.
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAddState}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold shadow-md shadow-sky-600/10 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add State</span>
+                </button>
+                <button
+                  onClick={handleAddChoiceNode}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold shadow-md shadow-amber-600/10 cursor-pointer"
+                >
+                  <GitMerge className="w-3.5 h-3.5" />
+                  <span>Add Decision Gate</span>
+                </button>
               </div>
+            </div>
 
-              {/* Grid of States and Decision Choice Gates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                {/* 1. STATES */}
-                {selectedWorkflow.states.map((st, idx) => (
-                  <div
-                    key={`state-${st.name}`}
-                    onClick={() => {
-                      if (isLinking) {
-                        completeTransitionLink(st.name);
-                      } else {
-                        setSelectedStateIndex(idx);
-                        setSelectedTransitionIndex(-1);
-                        setSelectedChoiceNodeIndex(-1);
-                      }
-                    }}
-                    className={`relative p-5 rounded-xl border flex flex-col gap-3 transition-all ${
-                      isLinking && linkSourceNode !== st.name
-                        ? 'border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer animate-pulse'
-                        : selectedStateIndex === idx
-                        ? 'bg-sky-500/5 border-sky-500 shadow-lg shadow-sky-500/5'
-                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-semibold text-white tracking-wide">{st.name}</span>
-                        <div className="flex gap-1.5 mt-1">
-                          {st.isInitial && (
-                            <span className="text-[8px] font-bold px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 rounded uppercase">
-                              Initial
-                            </span>
-                          )}
-                          {st.isFinal && (
-                            <span className="text-[8px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 rounded uppercase">
-                              Final
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startTransitionLink(st.name);
-                          }}
-                          className="p-1 hover:text-white text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
-                          title="Add Transition Link"
-                        >
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteState(idx);
-                          }}
-                          className="p-1 hover:text-red-400 text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
-                          title="Delete State"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-400 border-t border-slate-800/60 pt-2 flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5">
-                        <Shield className="w-3.5 h-3.5 text-slate-500" />
-                        <span className="truncate">Roles: {st.allowedRoles.join(', ') || 'None'}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* 2. CHOICE NODES (DECISION GATES) */}
-                {(selectedWorkflow.choiceNodes || []).map((ch, idx) => (
-                  <div
-                    key={`choice-${ch.id}`}
-                    onClick={() => {
-                      if (isLinking) {
-                        completeTransitionLink(ch.id);
-                      } else {
-                        setSelectedChoiceNodeIndex(idx);
-                        setSelectedStateIndex(-1);
-                        setSelectedTransitionIndex(-1);
-                      }
-                    }}
-                    className={`relative p-5 rounded-xl border flex flex-col gap-3 transition-all ${
-                      isLinking && linkSourceNode !== ch.id
-                        ? 'border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer animate-pulse'
-                        : selectedChoiceNodeIndex === idx
-                        ? 'bg-amber-500/5 border-amber-500 shadow-lg shadow-amber-500/5'
-                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-semibold text-white tracking-wide flex items-center gap-1.5">
-                          <GitMerge className="w-4 h-4 text-amber-500" />
-                          {ch.name}
-                        </span>
-                        <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/25 rounded uppercase w-max mt-1">
-                          Decision Gate
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startTransitionLink(ch.id);
-                          }}
-                          className="p-1 hover:text-white text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
-                          title="Add Transition Link"
-                        >
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteChoiceNode(idx);
-                          }}
-                          className="p-1 hover:text-red-400 text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
-                          title="Delete Gate"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-400 border-t border-slate-800/60 pt-2 flex flex-col gap-1.5">
-                      <div className="flex justify-between">
-                        <span>Branches: {ch.branches?.length || 0}</span>
-                        <span className="font-mono text-slate-500">Else: {ch.defaultState || 'None'}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Transitions List */}
-              {selectedWorkflow.transitions.length > 0 && (
-                <div className="border-t border-slate-800/80 pt-6 flex flex-col gap-3">
-                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Transitions & Triggers</h3>
-                  <div className="flex flex-col gap-2">
-                    {selectedWorkflow.transitions.map((tr, idx) => (
-                      <div
-                        key={tr.id}
-                        onClick={() => {
-                          setSelectedTransitionIndex(idx);
-                          setSelectedStateIndex(-1);
-                          setSelectedChoiceNodeIndex(-1);
-                        }}
-                        className={`p-3 rounded-lg border text-xs flex justify-between items-center transition-all cursor-pointer ${
-                          selectedTransitionIndex === idx
-                            ? 'bg-sky-500/5 border-sky-500 text-white'
-                            : 'bg-slate-900/40 border-slate-800/85 hover:bg-slate-800/50 text-slate-400'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-white">{tr.name}</span>
-                          <span className="text-slate-500 font-mono text-[10px]">({tr.fromState} → {tr.toState})</span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-950 text-slate-400 rounded">
-                            {tr.useCustomCommand ? `Custom: ${tr.trigger}` : `Gen: ${tr.trigger}`}
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteTransition(idx);
-                            }}
-                            className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-all"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* React Flow Canvas Container */}
+            <div className="flex-1 w-full relative min-h-[400px]">
+              <ReactFlow
+                nodes={flowNodes}
+                edges={flowEdges}
+                nodeTypes={nodeTypes}
+                onConnect={onConnect}
+                onNodeDragStop={onNodeDragStop}
+                onSelectionChange={onSelectionChange}
+                fitView
+                className="bg-slate-950/20"
+              >
+                <Background color="#1e293b" gap={16} size={1} />
+                <Controls className="!bg-slate-900 !border-slate-800 !text-slate-400 [&_button]:!border-slate-800 [&_button]:!bg-slate-900 [&_svg]:!fill-slate-400 [&_button:hover]:!bg-slate-800" />
+                <MiniMap 
+                  style={{ height: 100, width: 140 }}
+                  className="!bg-slate-900 !border-slate-800"
+                  nodeColor={(n) => n.type === 'choiceNode' ? '#f59e0b' : '#0284c7'}
+                  maskColor="rgba(15, 23, 42, 0.6)"
+                />
+              </ReactFlow>
             </div>
           </>
         ) : (
@@ -510,10 +493,20 @@ export const WorkflowDesigner: React.FC = () => {
           {selectedStateIndex >= 0 && (
             <>
               <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                  <Settings className="w-4 h-4 text-sky-500" />
-                  State Parameters
-                </h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Settings className="w-4 h-4 text-sky-500" />
+                    State Parameters
+                  </h3>
+                  <button
+                    onClick={() => handleDeleteState(selectedStateIndex)}
+                    className="text-slate-500 hover:text-red-400 p-1 bg-slate-900/60 rounded border border-slate-800"
+                    title="Delete State Node"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">State Name</label>
@@ -597,10 +590,20 @@ export const WorkflowDesigner: React.FC = () => {
           {selectedChoiceNodeIndex >= 0 && (
             <>
               <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                  <GitMerge className="w-4 h-4 text-amber-500" />
-                  Decision Gate Settings
-                </h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <GitMerge className="w-4 h-4 text-amber-500" />
+                    Decision Gate Settings
+                  </h3>
+                  <button
+                    onClick={() => handleDeleteChoiceNode(selectedChoiceNodeIndex)}
+                    className="text-slate-500 hover:text-red-400 p-1 bg-slate-900/60 rounded border border-slate-800"
+                    title="Delete Decision Node"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Gate ID</label>
@@ -794,10 +797,20 @@ export const WorkflowDesigner: React.FC = () => {
           {selectedTransitionIndex >= 0 && (
             <>
               <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                  <Cpu className="w-4 h-4 text-sky-500" />
-                  Transition Gate
-                </h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Cpu className="w-4 h-4 text-sky-500" />
+                    Transition Gate
+                  </h3>
+                  <button
+                    onClick={() => handleDeleteTransition(selectedTransitionIndex)}
+                    className="text-slate-500 hover:text-red-400 p-1 bg-slate-900/60 rounded border border-slate-800"
+                    title="Delete Transition Edge"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Transition Label</label>

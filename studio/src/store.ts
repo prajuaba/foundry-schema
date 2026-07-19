@@ -1049,7 +1049,9 @@ export const useStore = create<StoreState>((rawSet, get) => {
           Name: s.name,
           IsInitial: s.isInitial,
           IsFinal: s.isFinal,
-          AllowedRoles: s.allowedRoles
+          AllowedRoles: s.allowedRoles,
+          X: s.x,
+          Y: s.y
         })),
         Transitions: w.transitions.map(t => ({
           Id: t.id,
@@ -1079,6 +1081,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
           Id: c.id,
           Name: c.name,
           DefaultState: c.defaultState,
+          X: c.x,
+          Y: c.y,
           Branches: c.branches.map(b => ({
             ToState: b.toState,
             Conditions: b.conditions.map(cond => ({
@@ -1492,7 +1496,9 @@ export const useStore = create<StoreState>((rawSet, get) => {
         name: s.Name || s.name || '',
         isInitial: s.IsInitial !== undefined ? s.IsInitial : (s.isInitial !== undefined ? s.isInitial : false),
         isFinal: s.IsFinal !== undefined ? s.IsFinal : (s.isFinal !== undefined ? s.isFinal : false),
-        allowedRoles: s.AllowedRoles || s.allowedRoles || []
+        allowedRoles: s.AllowedRoles || s.allowedRoles || [],
+        x: s.X || s.x,
+        y: s.Y || s.y
       })),
       transitions: (w.Transitions || w.transitions || []).map((t: any) => ({
         id: t.Id || t.id || '',
@@ -1522,6 +1528,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
         id: c.Id || c.id || '',
         name: c.Name || c.name || '',
         defaultState: c.DefaultState || c.defaultState || '',
+        x: c.X || c.x,
+        y: c.Y || c.y,
         branches: (c.Branches || c.branches || []).map((b: any) => ({
           toState: b.ToState || b.toState || '',
           conditions: (b.Conditions || b.conditions || []).map((cond: any) => ({
