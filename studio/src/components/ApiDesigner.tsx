@@ -755,6 +755,19 @@ export const ApiDesigner: React.FC = () => {
                     />
                   </div>
 
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-slate-500 font-mono block dark:text-slate-500">
+                      BUSINESS RULES (COMMA SEPARATED)
+                    </label>
+                    <input
+                      type="text"
+                      value={(selectedItemDetail.ep.businessRules || []).join(', ')}
+                      onChange={(e) => updateCustomEndpoint(selectedItemDetail.customIndex!, { businessRules: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                      className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:border-sky-500 font-mono dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                      placeholder="e.g. LimitRule, StatusRule"
+                    />
+                  </div>
+
                   {/* Visual MongoDB Query Builder UI Block */}
                   <div className="border-t border-slate-200/80 pt-4 flex flex-col gap-4 mt-2 dark:border-slate-800/80">
                     <span className="text-[10px] font-bold text-sky-400 font-mono tracking-wider flex items-center gap-1.5 dark:text-sky-400">
