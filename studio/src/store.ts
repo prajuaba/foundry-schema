@@ -284,7 +284,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
           { name: 'Draft', isInitial: true, isFinal: false, allowedRoles: ['Admin'] },
           { name: 'Approved', isInitial: false, isFinal: true, allowedRoles: ['Admin'] }
         ],
-        transitions: []
+        transitions: [],
+        choiceNodes: []
       }
     ]
   })),
@@ -1073,6 +1074,20 @@ export const useStore = create<StoreState>((rawSet, get) => {
             Headers: a.type === 'ExternalApi' ? a.headers : undefined,
             BodyTemplate: a.type === 'ExternalApi' ? a.bodyTemplate : undefined
           }))
+        })),
+        ChoiceNodes: (w.choiceNodes || []).map(c => ({
+          Id: c.id,
+          Name: c.name,
+          DefaultState: c.defaultState,
+          Branches: c.branches.map(b => ({
+            ToState: b.toState,
+            Conditions: b.conditions.map(cond => ({
+              Type: cond.type,
+              Property: cond.property,
+              Operator: cond.operator,
+              Value: cond.value
+            }))
+          }))
         }))
       }))
     };
@@ -1250,6 +1265,20 @@ export const useStore = create<StoreState>((rawSet, get) => {
             Url: a.type === 'ExternalApi' ? a.url : undefined,
             Headers: a.type === 'ExternalApi' ? a.headers : undefined,
             BodyTemplate: a.type === 'ExternalApi' ? a.bodyTemplate : undefined
+          }))
+        })),
+        ChoiceNodes: (w.choiceNodes || []).map(c => ({
+          Id: c.id,
+          Name: c.name,
+          DefaultState: c.defaultState,
+          Branches: c.branches.map(b => ({
+            ToState: b.toState,
+            Conditions: b.conditions.map(cond => ({
+              Type: cond.type,
+              Property: cond.property,
+              Operator: cond.operator,
+              Value: cond.value
+            }))
           }))
         }))
       }))
@@ -1487,6 +1516,20 @@ export const useStore = create<StoreState>((rawSet, get) => {
           url: a.Url || a.url || '',
           headers: a.Headers || a.headers || {},
           bodyTemplate: a.BodyTemplate || a.bodyTemplate || ''
+        }))
+      })),
+      choiceNodes: (w.ChoiceNodes || w.choiceNodes || []).map((c: any) => ({
+        id: c.Id || c.id || '',
+        name: c.Name || c.name || '',
+        defaultState: c.DefaultState || c.defaultState || '',
+        branches: (c.Branches || c.branches || []).map((b: any) => ({
+          toState: b.ToState || b.toState || '',
+          conditions: (b.Conditions || b.conditions || []).map((cond: any) => ({
+            type: cond.Type || cond.type || 'PropertyComparison',
+            property: cond.Property || cond.property || '',
+            operator: cond.Operator || cond.operator || 'Equal',
+            value: cond.Value || cond.value || ''
+          }))
         }))
       }))
     }));

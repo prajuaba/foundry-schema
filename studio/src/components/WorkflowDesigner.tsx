@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import type { WorkflowDefinition, WorkflowState, WorkflowTransition, WorkflowCondition, WorkflowAction, InternalApiAction, ExternalApiAction } from '../types';
+import type { WorkflowDefinition, WorkflowState, WorkflowTransition, WorkflowCondition, WorkflowAction, InternalApiAction, ExternalApiAction, WorkflowChoiceNode, WorkflowChoiceBranch } from '../types';
 import { 
-  Plus, Trash2, Shield, Settings, ArrowRight,
+  Plus, Trash2, Shield, Settings, ArrowRight, GitMerge,
   Layers, Cpu
 } from 'lucide-react';
 
@@ -14,9 +14,10 @@ export const WorkflowDesigner: React.FC = () => {
   const [selectedWorkflowIndex, setSelectedWorkflowIndex] = useState<number>(-1);
   const [selectedStateIndex, setSelectedStateIndex] = useState<number>(-1);
   const [selectedTransitionIndex, setSelectedTransitionIndex] = useState<number>(-1);
+  const [selectedChoiceNodeIndex, setSelectedChoiceNodeIndex] = useState<number>(-1);
   
   const [isLinking, setIsLinking] = useState<boolean>(false);
-  const [linkSourceState, setLinkSourceState] = useState<string>('');
+  const [linkSourceNode, setLinkSourceNode] = useState<string>('');
 
   // Extract all entity names from class nodes on the canvas
   const availableEntities = useMemo(() => {
@@ -48,6 +49,25 @@ export const WorkflowDesigner: React.FC = () => {
     });
     setSelectedStateIndex(selectedWorkflow.states.length);
     setSelectedTransitionIndex(-1);
+    setSelectedChoiceNodeIndex(-1);
+  };
+
+  // Add Decision Gate (Choice Node)
+  const handleAddChoiceNode = () => {
+    if (!selectedWorkflow) return;
+    const name = `Check_Gate_${(selectedWorkflow.choiceNodes || []).length + 1}`;
+    const newChoice: WorkflowChoiceNode = {
+      id: name.toLowerCase(),
+      name,
+      branches: [],
+      defaultState: selectedWorkflow.states[0]?.name || ''
+    };
+    handleUpdateSelectedWorkflow({
+      choiceNodes: [...(selectedWorkflow.choiceNodes || []), newChoice]
+    });
+    setSelectedChoiceNodeIndex((selectedWorkflow.choiceNodes || []).length);
+    setSelectedStateIndex(-1);
+    setSelectedTransitionIndex(-1);
   };
 
   // Delete State from Selected Workflow
@@ -64,36 +84,54 @@ export const WorkflowDesigner: React.FC = () => {
     handleUpdateSelectedWorkflow({ states, transitions });
     setSelectedStateIndex(-1);
     setSelectedTransitionIndex(-1);
+    setSelectedChoiceNodeIndex(-1);
+  };
+
+  // Delete Choice Node
+  const handleDeleteChoiceNode = (choiceIndex: number) => {
+    if (!selectedWorkflow) return;
+    const choice = selectedWorkflow.choiceNodes[choiceIndex];
+    const choiceNodes = selectedWorkflow.choiceNodes.filter((_, idx) => idx !== choiceIndex);
+    
+    // Clean up references in transitions
+    const transitions = selectedWorkflow.transitions.filter(
+      t => t.fromState !== choice.id && t.toState !== choice.id
+    );
+
+    handleUpdateSelectedWorkflow({ choiceNodes, transitions });
+    setSelectedChoiceNodeIndex(-1);
+    setSelectedTransitionIndex(-1);
+    setSelectedStateIndex(-1);
   };
 
   // Start transition link mode
-  const startTransitionLink = (stateName: string) => {
+  const startTransitionLink = (nodeId: string) => {
     setIsLinking(true);
-    setLinkSourceState(stateName);
+    setLinkSourceNode(nodeId);
   };
 
   // Complete transition link mode
-  const completeTransitionLink = (targetStateName: string) => {
-    if (!selectedWorkflow || !linkSourceState || linkSourceState === targetStateName) {
+  const completeTransitionLink = (targetNodeId: string) => {
+    if (!selectedWorkflow || !linkSourceNode || linkSourceNode === targetNodeId) {
       setIsLinking(false);
-      setLinkSourceState('');
+      setLinkSourceNode('');
       return;
     }
 
-    const transitionId = `${linkSourceState.toLowerCase()}_to_${targetStateName.toLowerCase()}`;
+    const transitionId = `${linkSourceNode.toLowerCase()}_to_${targetNodeId.toLowerCase()}`;
     // Check if transition already exists
-    if (selectedWorkflow.transitions.some(t => t.fromState === linkSourceState && t.toState === targetStateName)) {
+    if (selectedWorkflow.transitions.some(t => t.fromState === linkSourceNode && t.toState === targetNodeId)) {
       setIsLinking(false);
-      setLinkSourceState('');
+      setLinkSourceNode('');
       return;
     }
 
     const newTransition: WorkflowTransition = {
       id: transitionId,
-      name: `Transition to ${targetStateName}`,
-      fromState: linkSourceState,
-      toState: targetStateName,
-      trigger: `${linkSourceState}To${targetStateName}Command`,
+      name: `Transition to ${targetNodeId}`,
+      fromState: linkSourceNode,
+      toState: targetNodeId,
+      trigger: `${linkSourceNode}To${targetNodeId}Command`,
       useCustomCommand: false,
       requiredRoles: ['Admin'],
       conditions: [],
@@ -106,8 +144,9 @@ export const WorkflowDesigner: React.FC = () => {
 
     setSelectedTransitionIndex(selectedWorkflow.transitions.length);
     setSelectedStateIndex(-1);
+    setSelectedChoiceNodeIndex(-1);
     setIsLinking(false);
-    setLinkSourceState('');
+    setLinkSourceNode('');
   };
 
   // Delete Transition
@@ -144,6 +183,7 @@ export const WorkflowDesigner: React.FC = () => {
                 setSelectedWorkflowIndex(idx);
                 setSelectedStateIndex(-1);
                 setSelectedTransitionIndex(-1);
+                setSelectedChoiceNodeIndex(-1);
               }}
               className={`p-3 rounded-lg text-left text-xs transition-all cursor-pointer border flex flex-col gap-1.5 ${
                 selectedWorkflowIndex === idx
@@ -248,36 +288,47 @@ export const WorkflowDesigner: React.FC = () => {
                 <span className="text-xs text-slate-500 font-mono">
                   {isLinking ? (
                     <span className="text-amber-400 font-bold animate-pulse">
-                      Linking state "{linkSourceState}"... click target state card below to map transition
+                      Linking node "{linkSourceNode}"... click target state/choice node card below to map transition
                     </span>
                   ) : (
-                    'Click "Add State" or select cards below to configure parameters.'
+                    'Configure workflow states and automated decision choice gates.'
                   )}
                 </span>
-                <button
-                  onClick={handleAddState}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold shadow-md shadow-sky-600/10 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add State</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddState}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold shadow-md shadow-sky-600/10 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add State</span>
+                  </button>
+                  <button
+                    onClick={handleAddChoiceNode}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold shadow-md shadow-amber-600/10 cursor-pointer"
+                  >
+                    <GitMerge className="w-3.5 h-3.5" />
+                    <span>Add Decision Gate</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Grid of States */}
+              {/* Grid of States and Decision Choice Gates */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                {/* 1. STATES */}
                 {selectedWorkflow.states.map((st, idx) => (
                   <div
-                    key={st.name}
+                    key={`state-${st.name}`}
                     onClick={() => {
                       if (isLinking) {
                         completeTransitionLink(st.name);
                       } else {
                         setSelectedStateIndex(idx);
                         setSelectedTransitionIndex(-1);
+                        setSelectedChoiceNodeIndex(-1);
                       }
                     }}
                     className={`relative p-5 rounded-xl border flex flex-col gap-3 transition-all ${
-                      isLinking && linkSourceState !== st.name
+                      isLinking && linkSourceNode !== st.name
                         ? 'border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer animate-pulse'
                         : selectedStateIndex === idx
                         ? 'bg-sky-500/5 border-sky-500 shadow-lg shadow-sky-500/5'
@@ -333,6 +384,71 @@ export const WorkflowDesigner: React.FC = () => {
                     </div>
                   </div>
                 ))}
+
+                {/* 2. CHOICE NODES (DECISION GATES) */}
+                {(selectedWorkflow.choiceNodes || []).map((ch, idx) => (
+                  <div
+                    key={`choice-${ch.id}`}
+                    onClick={() => {
+                      if (isLinking) {
+                        completeTransitionLink(ch.id);
+                      } else {
+                        setSelectedChoiceNodeIndex(idx);
+                        setSelectedStateIndex(-1);
+                        setSelectedTransitionIndex(-1);
+                      }
+                    }}
+                    className={`relative p-5 rounded-xl border flex flex-col gap-3 transition-all ${
+                      isLinking && linkSourceNode !== ch.id
+                        ? 'border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer animate-pulse'
+                        : selectedChoiceNodeIndex === idx
+                        ? 'bg-amber-500/5 border-amber-500 shadow-lg shadow-amber-500/5'
+                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-semibold text-white tracking-wide flex items-center gap-1.5">
+                          <GitMerge className="w-4 h-4 text-amber-500" />
+                          {ch.name}
+                        </span>
+                        <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/25 rounded uppercase w-max mt-1">
+                          Decision Gate
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startTransitionLink(ch.id);
+                          }}
+                          className="p-1 hover:text-white text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
+                          title="Add Transition Link"
+                        >
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteChoiceNode(idx);
+                          }}
+                          className="p-1 hover:text-red-400 text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
+                          title="Delete Gate"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-slate-400 border-t border-slate-800/60 pt-2 flex flex-col gap-1.5">
+                      <div className="flex justify-between">
+                        <span>Branches: {ch.branches?.length || 0}</span>
+                        <span className="font-mono text-slate-500">Else: {ch.defaultState || 'None'}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
 
               {/* Transitions List */}
@@ -346,6 +462,7 @@ export const WorkflowDesigner: React.FC = () => {
                         onClick={() => {
                           setSelectedTransitionIndex(idx);
                           setSelectedStateIndex(-1);
+                          setSelectedChoiceNodeIndex(-1);
                         }}
                         className={`p-3 rounded-lg border text-xs flex justify-between items-center transition-all cursor-pointer ${
                           selectedTransitionIndex === idx
@@ -386,9 +503,9 @@ export const WorkflowDesigner: React.FC = () => {
         )}
       </div>
 
-      {/* Right Sidebar - Properties Inspector (State OR Transition details) */}
-      {selectedWorkflow && (selectedStateIndex >= 0 || selectedTransitionIndex >= 0) && (
-        <div className="w-80 border-l border-slate-800 bg-slate-950/40 p-5 flex flex-col gap-6 overflow-y-auto print-hide">
+      {/* Right Sidebar - Properties Inspector */}
+      {selectedWorkflow && (selectedStateIndex >= 0 || selectedTransitionIndex >= 0 || selectedChoiceNodeIndex >= 0) && (
+        <div className="w-85 border-l border-slate-800 bg-slate-950/40 p-5 flex flex-col gap-6 overflow-y-auto print-hide">
           {/* STATE INSPECTION */}
           {selectedStateIndex >= 0 && (
             <>
@@ -461,7 +578,7 @@ export const WorkflowDesigner: React.FC = () => {
                     <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Authorized Security Roles</label>
                     <input
                       type="text"
-                      placeholder="Comma-separated roles (e.g. Admin, Manager)"
+                      placeholder="Comma-separated roles"
                       value={selectedWorkflow.states[selectedStateIndex].allowedRoles.join(', ')}
                       onChange={(e) => {
                         const states = [...selectedWorkflow.states];
@@ -470,6 +587,203 @@ export const WorkflowDesigner: React.FC = () => {
                       }}
                       className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-white font-medium"
                     />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* CHOICE NODE (DECISION GATE) INSPECTION */}
+          {selectedChoiceNodeIndex >= 0 && (
+            <>
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-1.5">
+                  <GitMerge className="w-4 h-4 text-amber-500" />
+                  Decision Gate Settings
+                </h3>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Gate ID</label>
+                    <input
+                      type="text"
+                      value={selectedWorkflow.choiceNodes[selectedChoiceNodeIndex].name}
+                      onChange={(e) => {
+                        const choiceNodes = [...selectedWorkflow.choiceNodes];
+                        const oldId = choiceNodes[selectedChoiceNodeIndex].id;
+                        const newName = e.target.value;
+                        const newId = newName.toLowerCase().replace(/\s+/g, '_');
+                        
+                        choiceNodes[selectedChoiceNodeIndex].name = newName;
+                        choiceNodes[selectedChoiceNodeIndex].id = newId;
+
+                        // Sync transitions referencing this choice node
+                        const transitions = selectedWorkflow.transitions.map(t => {
+                          let updated = { ...t };
+                          if (t.fromState === oldId) updated.fromState = newId;
+                          if (t.toState === oldId) updated.toState = newId;
+                          return updated;
+                        });
+
+                        handleUpdateSelectedWorkflow({ choiceNodes, transitions });
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-white font-semibold"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Default Target State (Else)</label>
+                    <select
+                      value={selectedWorkflow.choiceNodes[selectedChoiceNodeIndex].defaultState}
+                      onChange={(e) => {
+                        const choiceNodes = [...selectedWorkflow.choiceNodes];
+                        choiceNodes[selectedChoiceNodeIndex].defaultState = e.target.value;
+                        handleUpdateSelectedWorkflow({ choiceNodes });
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-white"
+                    >
+                      <option value="">-- Select Target State --</option>
+                      {selectedWorkflow.states.map(s => (
+                        <option key={s.name} value={s.name}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Branches Section */}
+                  <div className="border-t border-slate-800/80 pt-4 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Conditional Branches</span>
+                      <button
+                        onClick={() => {
+                          const choiceNodes = [...selectedWorkflow.choiceNodes];
+                          const newBranch: WorkflowChoiceBranch = {
+                            toState: selectedWorkflow.states[0]?.name || '',
+                            conditions: []
+                          };
+                          choiceNodes[selectedChoiceNodeIndex].branches = [
+                            ...(choiceNodes[selectedChoiceNodeIndex].branches || []),
+                            newBranch
+                          ];
+                          handleUpdateSelectedWorkflow({ choiceNodes });
+                        }}
+                        className="p-1 hover:text-white text-slate-500 bg-slate-950/40 rounded transition-all cursor-pointer"
+                        title="Add Conditional Branch"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {(selectedWorkflow.choiceNodes[selectedChoiceNodeIndex].branches || []).map((br, bIdx) => (
+                        <div key={bIdx} className="bg-slate-950/50 border border-slate-850 p-3 rounded flex flex-col gap-2 text-[10px]">
+                          <div className="flex justify-between items-center border-b border-slate-800/60 pb-1.5">
+                            <span className="font-mono text-amber-400">Branch #{bIdx + 1}</span>
+                            <button
+                              onClick={() => {
+                                const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                choiceNodes[selectedChoiceNodeIndex].branches = choiceNodes[selectedChoiceNodeIndex].branches.filter((_, i) => i !== bIdx);
+                                handleUpdateSelectedWorkflow({ choiceNodes });
+                              }}
+                              className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-500 uppercase">Target State</label>
+                            <select
+                              value={br.toState}
+                              onChange={(e) => {
+                                const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                choiceNodes[selectedChoiceNodeIndex].branches[bIdx].toState = e.target.value;
+                                handleUpdateSelectedWorkflow({ choiceNodes });
+                              }}
+                              className="px-2 py-1 bg-slate-950 border border-slate-800 rounded focus:outline-none focus:border-sky-500 text-white"
+                            >
+                              {selectedWorkflow.states.map(s => (
+                                <option key={s.name} value={s.name}>{s.name}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Branch Conditions */}
+                          <div className="flex flex-col gap-1.5 mt-1.5">
+                            <div className="flex justify-between items-center text-[9px] text-slate-500 uppercase">
+                              <span>Conditions</span>
+                              <button
+                                onClick={() => {
+                                  const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                  choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions.push({
+                                    type: 'PropertyComparison',
+                                    property: '',
+                                    operator: 'Equal',
+                                    value: ''
+                                  });
+                                  handleUpdateSelectedWorkflow({ choiceNodes });
+                                }}
+                                className="hover:text-white"
+                              >
+                                + Add Guard
+                              </button>
+                            </div>
+
+                            {br.conditions.map((cond, cIdx) => (
+                              <div key={cIdx} className="flex gap-1.5 items-center">
+                                <input
+                                  type="text"
+                                  placeholder="Prop"
+                                  value={cond.property}
+                                  onChange={(e) => {
+                                    const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                    choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions[cIdx].property = e.target.value;
+                                    handleUpdateSelectedWorkflow({ choiceNodes });
+                                  }}
+                                  className="w-1/3 px-2 py-1 bg-slate-950 border border-slate-800 rounded text-white font-mono"
+                                />
+                                <select
+                                  value={cond.operator}
+                                  onChange={(e) => {
+                                    const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                    choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions[cIdx].operator = e.target.value as any;
+                                    handleUpdateSelectedWorkflow({ choiceNodes });
+                                  }}
+                                  className="w-1/3 px-2 py-1 bg-slate-950 border border-slate-800 rounded text-white text-[9px]"
+                                >
+                                  <option value="Equal">==</option>
+                                  <option value="NotEqual">!=</option>
+                                  <option value="LessThan">&lt;</option>
+                                  <option value="LessThanOrEqual">&lt;=</option>
+                                  <option value="GreaterThan">&gt;</option>
+                                  <option value="GreaterThanOrEqual">&gt;=</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  placeholder="Val"
+                                  value={cond.value}
+                                  onChange={(e) => {
+                                    const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                    choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions[cIdx].value = e.target.value;
+                                    handleUpdateSelectedWorkflow({ choiceNodes });
+                                  }}
+                                  className="w-1/3 px-2 py-1 bg-slate-950 border border-slate-800 rounded text-white font-mono"
+                                />
+                                <button
+                                  onClick={() => {
+                                    const choiceNodes = [...selectedWorkflow.choiceNodes];
+                                    choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions = 
+                                      choiceNodes[selectedChoiceNodeIndex].branches[bIdx].conditions.filter((_, i) => i !== cIdx);
+                                    handleUpdateSelectedWorkflow({ choiceNodes });
+                                  }}
+                                  className="text-slate-500 hover:text-red-400"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>

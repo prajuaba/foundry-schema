@@ -23,6 +23,7 @@ namespace Foundry.Schema.Compiler
         public bool IsActive { get; init; }
         public List<WorkflowStateModel> States { get; init; } = new();
         public List<WorkflowTransitionModel> Transitions { get; init; } = new();
+        public List<WorkflowChoiceNodeModel> ChoiceNodes { get; init; } = new();
     }
 
     public record WorkflowStateModel
@@ -141,5 +142,19 @@ namespace Foundry.Schema.Compiler
         public string EntityProperty { get; init; } = string.Empty;
         public string SourceType { get; init; } = "RequestProperty";
         public string SourceValue { get; init; } = string.Empty;
+    }
+
+    public record WorkflowChoiceNodeModel
+    {
+        public string Id { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string DefaultState { get; init; } = string.Empty;
+        public List<WorkflowChoiceBranchModel> Branches { get; init; } = new();
+    }
+
+    public record WorkflowChoiceBranchModel
+    {
+        public string ToState { get; init; } = string.Empty;
+        public List<WorkflowConditionModel> Conditions { get; init; } = new();
     }
 }

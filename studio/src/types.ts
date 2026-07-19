@@ -122,6 +122,18 @@ export interface WorkflowTransition {
   actions: WorkflowAction[];
 }
 
+export interface WorkflowChoiceBranch {
+  toState: string;
+  conditions: WorkflowCondition[];
+}
+
+export interface WorkflowChoiceNode {
+  id: string;
+  name: string;
+  branches: WorkflowChoiceBranch[];
+  defaultState: string;
+}
+
 export interface WorkflowDefinition {
   id: string;
   name: string;
@@ -132,6 +144,7 @@ export interface WorkflowDefinition {
   isActive: boolean;
   states: WorkflowState[];
   transitions: WorkflowTransition[];
+  choiceNodes: WorkflowChoiceNode[];
 }
 
 export type ClassNode = Node<{ entity: Entity }, 'classNode'>;
