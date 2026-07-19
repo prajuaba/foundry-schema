@@ -78,6 +78,62 @@ export interface DtoModel {
   properties: DtoProperty[];
 }
 
+export interface WorkflowState {
+  name: string;
+  isInitial: boolean;
+  isFinal: boolean;
+  allowedRoles: string[];
+}
+
+export interface PropertyComparisonCondition {
+  type: 'PropertyComparison';
+  property: string;
+  operator: 'LessThanOrEqual' | 'GreaterThanOrEqual' | 'Equal' | 'NotEqual' | 'LessThan' | 'GreaterThan';
+  value: string;
+}
+
+export type WorkflowCondition = PropertyComparisonCondition;
+
+export interface InternalApiAction {
+  type: 'InternalApi';
+  requestType: string;
+  payloadTemplate: string;
+}
+
+export interface ExternalApiAction {
+  type: 'ExternalApi';
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  bodyTemplate: string;
+}
+
+export type WorkflowAction = InternalApiAction | ExternalApiAction;
+
+export interface WorkflowTransition {
+  id: string;
+  name: string;
+  fromState: string;
+  toState: string;
+  trigger: string;
+  useCustomCommand: boolean;
+  requiredRoles: string[];
+  conditions: WorkflowCondition[];
+  actions: WorkflowAction[];
+}
+
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  entity: string;
+  version: string;
+  effectiveDate: string;
+  expirationDate: string;
+  isActive: boolean;
+  states: WorkflowState[];
+  transitions: WorkflowTransition[];
+}
+
 export type ClassNode = Node<{ entity: Entity }, 'classNode'>;
 export type EnumNode = Node<{ enum: Enum }, 'enumNode'>;
 export type AppNode = ClassNode | EnumNode;

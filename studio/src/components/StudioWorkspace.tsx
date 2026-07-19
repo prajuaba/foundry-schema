@@ -16,7 +16,8 @@ import { UmlEnumNode } from './UmlEnumNode';
 import { OrthogonalEdge } from './OrthogonalEdge';
 import { InspectorPanel } from './InspectorPanel';
 import { ApiDesigner } from './ApiDesigner';
-import { Play, Download, Upload, Code, Plus, Check, Settings, Sparkles, Database, Globe, Plug, Undo2, Redo2, Sun, Moon } from 'lucide-react';
+import { WorkflowDesigner } from './WorkflowDesigner';
+import { Play, Download, Upload, Code, Plus, Check, Settings, Sparkles, Database, Globe, Plug, Undo2, Redo2, Sun, Moon, GitBranch } from 'lucide-react';
 
 const nodeTypes: NodeTypes = {
   classNode: UmlClassNode,
@@ -254,7 +255,7 @@ export const StudioWorkspace: React.FC = () => {
   const [manifestPath, setManifestPath] = useState<string>('../../samples/Foundry.Api.Sample/api-manifest.json');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [activeView, setActiveView] = useState<'schema' | 'api'>('schema');
+  const [activeView, setActiveView] = useState<'schema' | 'api' | 'workflow'>('schema');
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
@@ -633,6 +634,16 @@ export const StudioWorkspace: React.FC = () => {
             >
               <Globe className="w-3.5 h-3.5" /> API Designer
             </button>
+            <button
+              onClick={() => setActiveView('workflow')}
+              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+                activeView === 'workflow' 
+                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <GitBranch className="w-3.5 h-3.5" /> Workflow Designer
+            </button>
           </div>
 
           {/* Undo / Redo Actions */}
@@ -913,7 +924,7 @@ export const StudioWorkspace: React.FC = () => {
             {/* Right Panel - Property Inspector */}
             {!isFullScreen && <InspectorPanel />}
           </>
-        ) : (
+        ) : activeView === 'api' ? (
           <>
             {/* Left Panel - API Overview */}
             <div className="w-64 bg-white/80 dark:bg-slate-900/50 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-6 z-10 backdrop-blur-md transition-colors duration-200">
@@ -971,6 +982,8 @@ export const StudioWorkspace: React.FC = () => {
             {/* API Designer Panel */}
             <ApiDesigner />
           </>
+        ) : (
+          <WorkflowDesigner />
         )}
       </div>
 

@@ -8,7 +8,7 @@ import {
   type OnEdgesChange, 
   type OnConnect 
 } from '@xyflow/react';
-import type { Entity, Property, Index, AppNode, ClassNode, EnumNode, CustomEndpoint, DtoModel } from './types';
+import type { Entity, Property, Index, AppNode, ClassNode, EnumNode, CustomEndpoint, DtoModel, WorkflowDefinition } from './types';
 
 interface StoreState {
   namespace: string;
@@ -58,6 +58,11 @@ interface StoreState {
   updateDto: (index: number, updated: Partial<DtoModel>) => void;
   deleteDto: (index: number) => void;
 
+  workflows: WorkflowDefinition[];
+  addWorkflow: () => void;
+  updateWorkflow: (index: number, updated: Partial<WorkflowDefinition>) => void;
+  deleteWorkflow: (index: number) => void;
+
   ollamaHost: string;
   ollamaModel: string;
   setOllamaHost: (host: string) => void;
@@ -84,6 +89,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
       edges: JSON.parse(JSON.stringify(state.edges || [])),
       customEndpoints: JSON.parse(JSON.stringify(state.customEndpoints || [])),
       dtos: JSON.parse(JSON.stringify(state.dtos || [])),
+      workflows: JSON.parse(JSON.stringify(state.workflows || [])),
       namespace: state.namespace
     };
   };
@@ -100,6 +106,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
         'edges' in nextState || 
         'customEndpoints' in nextState || 
         'dtos' in nextState || 
+        'workflows' in nextState || 
         'namespace' in nextState;
 
       let shouldSave = hasRelevantChange;
@@ -145,6 +152,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
   activeTool: 'Select',
   customEndpoints: [],
   dtos: [],
+  workflows: [],
   canUndo: false,
   canRedo: false,
 
@@ -156,6 +164,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
       edges: JSON.parse(JSON.stringify(get().edges || [])),
       customEndpoints: JSON.parse(JSON.stringify(get().customEndpoints || [])),
       dtos: JSON.parse(JSON.stringify(get().dtos || [])),
+      workflows: JSON.parse(JSON.stringify(get().workflows || [])),
       namespace: get().namespace
     };
     futureStates.push(current);
@@ -174,6 +183,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
       edges: JSON.parse(JSON.stringify(get().edges || [])),
       customEndpoints: JSON.parse(JSON.stringify(get().customEndpoints || [])),
       dtos: JSON.parse(JSON.stringify(get().dtos || [])),
+      workflows: JSON.parse(JSON.stringify(get().workflows || [])),
       namespace: get().namespace
     };
     pastStates.push(current);
@@ -257,6 +267,36 @@ export const useStore = create<StoreState>((rawSet, get) => {
 
   deleteDto: (index) => set((state) => ({
     dtos: state.dtos.filter((_, i) => i !== index)
+  })),
+
+  addWorkflow: () => set((state) => ({
+    workflows: [
+      ...state.workflows,
+      {
+        id: `workflow_${state.workflows.length + 1}`,
+        name: `New Workflow ${state.workflows.length + 1}`,
+        entity: '',
+        version: '1.0.0',
+        effectiveDate: new Date().toISOString().split('T')[0],
+        expirationDate: '',
+        isActive: true,
+        states: [
+          { name: 'Draft', isInitial: true, isFinal: false, allowedRoles: ['Admin'] },
+          { name: 'Approved', isInitial: false, isFinal: true, allowedRoles: ['Admin'] }
+        ],
+        transitions: []
+      }
+    ]
+  })),
+
+  updateWorkflow: (index, updated) => set((state) => {
+    const list = [...state.workflows];
+    list[index] = { ...list[index], ...updated };
+    return { workflows: list };
+  }),
+
+  deleteWorkflow: (index) => set((state) => ({
+    workflows: state.workflows.filter((_, i) => i !== index)
   })),
 
   // React Flow actions
@@ -996,6 +1036,45 @@ export const useStore = create<StoreState>((rawSet, get) => {
         Assignments: e.assignments,
         BusinessRules: e.businessRules || []
       })),
+      Workflows: get().workflows.map(w => ({
+        Id: w.id,
+        Name: w.name,
+        Entity: w.entity,
+        Version: w.version,
+        EffectiveDate: w.effectiveDate,
+        ExpirationDate: w.expirationDate,
+        IsActive: w.isActive,
+        States: w.states.map(s => ({
+          Name: s.name,
+          IsInitial: s.isInitial,
+          IsFinal: s.isFinal,
+          AllowedRoles: s.allowedRoles
+        })),
+        Transitions: w.transitions.map(t => ({
+          Id: t.id,
+          Name: t.name,
+          FromState: t.fromState,
+          ToState: t.toState,
+          Trigger: t.trigger,
+          UseCustomCommand: t.useCustomCommand || false,
+          RequiredRoles: t.requiredRoles,
+          Conditions: t.conditions.map(c => ({
+            Type: c.type,
+            Property: c.property,
+            Operator: c.operator,
+            Value: c.value
+          })),
+          Actions: t.actions.map(a => ({
+            Type: a.type,
+            RequestType: a.type === 'InternalApi' ? a.requestType : undefined,
+            PayloadTemplate: a.type === 'InternalApi' ? a.payloadTemplate : undefined,
+            Method: a.type === 'ExternalApi' ? a.method : undefined,
+            Url: a.type === 'ExternalApi' ? a.url : undefined,
+            Headers: a.type === 'ExternalApi' ? a.headers : undefined,
+            BodyTemplate: a.type === 'ExternalApi' ? a.bodyTemplate : undefined
+          }))
+        }))
+      }))
     };
   },
 
@@ -1128,13 +1207,51 @@ export const useStore = create<StoreState>((rawSet, get) => {
       // API engine — consumed by Foundry.Api source generator
       Endpoints: endpoints,
 
-      // Custom business operations (from ApiDesigner)
       CustomEndpoints: customEndpoints.map(e => ({
         Route: e.route,
         Method: e.method,
         RequestType: e.requestType,
         Roles: e.roles,
         BusinessRules: e.businessRules || []
+      })),
+      Workflows: get().workflows.map(w => ({
+        Id: w.id,
+        Name: w.name,
+        Entity: w.entity,
+        Version: w.version,
+        EffectiveDate: w.effectiveDate,
+        ExpirationDate: w.expirationDate,
+        IsActive: w.isActive,
+        States: w.states.map(s => ({
+          Name: s.name,
+          IsInitial: s.isInitial,
+          IsFinal: s.isFinal,
+          AllowedRoles: s.allowedRoles
+        })),
+        Transitions: w.transitions.map(t => ({
+          Id: t.id,
+          Name: t.name,
+          FromState: t.fromState,
+          ToState: t.toState,
+          Trigger: t.trigger,
+          UseCustomCommand: t.useCustomCommand || false,
+          RequiredRoles: t.requiredRoles,
+          Conditions: t.conditions.map(c => ({
+            Type: c.type,
+            Property: c.property,
+            Operator: c.operator,
+            Value: c.value
+          })),
+          Actions: t.actions.map(a => ({
+            Type: a.type,
+            RequestType: a.type === 'InternalApi' ? a.requestType : undefined,
+            PayloadTemplate: a.type === 'InternalApi' ? a.payloadTemplate : undefined,
+            Method: a.type === 'ExternalApi' ? a.method : undefined,
+            Url: a.type === 'ExternalApi' ? a.url : undefined,
+            Headers: a.type === 'ExternalApi' ? a.headers : undefined,
+            BodyTemplate: a.type === 'ExternalApi' ? a.bodyTemplate : undefined
+          }))
+        }))
       }))
     };
   },
@@ -1333,24 +1450,66 @@ export const useStore = create<StoreState>((rawSet, get) => {
         attributes: p.Attributes || p.attributes || []
       }))
     }));
+
+    const workflowsImported = (schema.Workflows || schema.workflows || []).map((w: any) => ({
+      id: w.Id || w.id || 'workflow_1',
+      name: w.Name || w.name || 'Unnamed Workflow',
+      entity: w.Entity || w.entity || '',
+      version: w.Version || w.version || '1.0.0',
+      effectiveDate: w.EffectiveDate || w.effectiveDate || '',
+      expirationDate: w.ExpirationDate || w.expirationDate || '',
+      isActive: w.IsActive !== undefined ? w.IsActive : (w.isActive !== undefined ? w.isActive : true),
+      states: (w.States || w.states || []).map((s: any) => ({
+        name: s.Name || s.name || '',
+        isInitial: s.IsInitial !== undefined ? s.IsInitial : (s.isInitial !== undefined ? s.isInitial : false),
+        isFinal: s.IsFinal !== undefined ? s.IsFinal : (s.isFinal !== undefined ? s.isFinal : false),
+        allowedRoles: s.AllowedRoles || s.allowedRoles || []
+      })),
+      transitions: (w.Transitions || w.transitions || []).map((t: any) => ({
+        id: t.Id || t.id || '',
+        name: t.Name || t.name || '',
+        fromState: t.FromState || t.fromState || '',
+        toState: t.ToState || t.toState || '',
+        trigger: t.Trigger || t.trigger || '',
+        useCustomCommand: t.UseCustomCommand !== undefined ? t.UseCustomCommand : (t.useCustomCommand !== undefined ? t.useCustomCommand : false),
+        requiredRoles: t.RequiredRoles || t.requiredRoles || [],
+        conditions: (t.Conditions || t.conditions || []).map((c: any) => ({
+          type: c.Type || c.type || 'PropertyComparison',
+          property: c.Property || c.property || '',
+          operator: c.Operator || c.operator || 'Equal',
+          value: c.Value || c.value || ''
+        })),
+        actions: (t.Actions || t.actions || []).map((a: any) => ({
+          type: a.Type || a.type || 'InternalApi',
+          requestType: a.RequestType || a.requestType || '',
+          payloadTemplate: a.PayloadTemplate || a.payloadTemplate || '',
+          method: a.Method || a.method || 'POST',
+          url: a.Url || a.url || '',
+          headers: a.Headers || a.headers || {},
+          bodyTemplate: a.BodyTemplate || a.bodyTemplate || ''
+        }))
+      }))
+    }));
     
     set({
       namespace,
       nodes: newNodes,
       edges: newEdges,
       customEndpoints: customEndpointsImported,
-      dtos: dtosImported
+      dtos: dtosImported,
+      workflows: workflowsImported
     });
   },
 
   exportProject: () => {
-    const { namespace, nodes, edges, customEndpoints, dtos } = get();
+    const { namespace, nodes, edges, customEndpoints, dtos, workflows } = get();
     return {
       Namespace: namespace,
       Nodes: nodes,
       Edges: edges,
       CustomEndpoints: customEndpoints,
-      Dtos: dtos
+      Dtos: dtos,
+      Workflows: workflows
     };
   },
 
@@ -1361,7 +1520,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
       nodes: project.Nodes || project.nodes || [],
       edges: project.Edges || project.edges || [],
       customEndpoints: project.CustomEndpoints || project.customEndpoints || [],
-      dtos: project.Dtos || project.dtos || []
+      dtos: project.Dtos || project.dtos || [],
+      workflows: project.Workflows || project.workflows || []
     });
   },
 
