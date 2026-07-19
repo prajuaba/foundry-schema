@@ -8,7 +8,7 @@ import {
   type OnEdgesChange, 
   type OnConnect 
 } from '@xyflow/react';
-import type { Entity, Property, Index, AppNode, ClassNode, EnumNode, CustomEndpoint } from './types';
+import type { Entity, Property, Index, AppNode, ClassNode, EnumNode, CustomEndpoint, DtoModel } from './types';
 
 interface StoreState {
   namespace: string;
@@ -28,6 +28,7 @@ interface StoreState {
   addEnumNode: (x: number, y: number) => void;
   deleteNode: (nodeId: string) => void;
   deleteEdge: (edgeId: string) => void;
+  updateEdgeRelationship: (edgeId: string, type: 'Association' | 'Composition' | 'Inheritance' | 'Select') => void;
   updateClassNode: (nodeId: string, updatedData: Partial<Entity>) => void;
   updateEnumNode: (nodeId: string, updatedData: { name: string; values: string[] }) => void;
   updateProperty: (nodeId: string, propIndex: number, updatedProp: Partial<Property>) => void;
@@ -40,6 +41,8 @@ interface StoreState {
   // Serialization & Deserialization
   exportToSchema: () => any;
   importFromSchema: (schema: any) => void;
+  exportProject: () => any;
+  importProject: (project: any) => void;
   
   // Custom setter for bulk node/edge updates
   setCanvasData: (nodes: AppNode[], edges: Edge[]) => void;
@@ -49,14 +52,170 @@ interface StoreState {
   updateCustomEndpoint: (index: number, updated: Partial<CustomEndpoint>) => void;
   deleteCustomEndpoint: (index: number) => void;
   exportToApiManifest: () => any;
+
+  dtos: DtoModel[];
+  addDto: (name?: string) => void;
+  updateDto: (index: number, updated: Partial<DtoModel>) => void;
+  deleteDto: (index: number) => void;
+
+  ollamaHost: string;
+  ollamaModel: string;
+  setOllamaHost: (host: string) => void;
+  setOllamaModel: (model: string) => void;
+  ollamaModels: string[];
+  fetchOllamaModels: () => Promise<void>;
+
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
-export const useStore = create<StoreState>((set, get) => ({
-  namespace: 'Paperclip.OrderingSystem.Domain',
+// Module-level history variables to persist history state across set calls
+const pastStates: any[] = [];
+const futureStates: any[] = [];
+
+export const useStore = create<StoreState>((rawSet, get) => {
+  const captureSnapshot = () => {
+    const state = get();
+    if (!state) return null;
+    return {
+      nodes: JSON.parse(JSON.stringify(state.nodes || [])),
+      edges: JSON.parse(JSON.stringify(state.edges || [])),
+      customEndpoints: JSON.parse(JSON.stringify(state.customEndpoints || [])),
+      dtos: JSON.parse(JSON.stringify(state.dtos || [])),
+      namespace: state.namespace
+    };
+  };
+
+  const set = (
+    slice: Partial<StoreState> | ((state: StoreState) => Partial<StoreState> | StoreState),
+    replace?: boolean
+  ) => {
+    const state = get();
+    if (state) {
+      const nextState = typeof slice === 'function' ? slice(state) : slice;
+      const hasRelevantChange = 
+        'nodes' in nextState || 
+        'edges' in nextState || 
+        'customEndpoints' in nextState || 
+        'dtos' in nextState || 
+        'namespace' in nextState;
+
+      let shouldSave = hasRelevantChange;
+      if (shouldSave && 'nodes' in nextState) {
+        const currentNodes = state.nodes || [];
+        const newNodes = nextState.nodes || [];
+        if (currentNodes.length === newNodes.length) {
+          const onlyPosOrSel = newNodes.every((n: any, i: number) => {
+            const cur = currentNodes[i];
+            return cur && 
+              cur.id === n.id && 
+              cur.type === n.type && 
+              JSON.stringify(cur.data) === JSON.stringify(n.data);
+          });
+          if (onlyPosOrSel) {
+            shouldSave = false;
+          }
+        }
+      }
+
+      if (shouldSave) {
+        const snap = captureSnapshot();
+        if (snap) {
+          pastStates.push(snap);
+          if (pastStates.length > 50) pastStates.shift();
+          futureStates.length = 0;
+          rawSet({ canUndo: true, canRedo: false });
+        }
+      }
+    }
+    
+    if (replace) {
+      rawSet(slice as any, true);
+    } else {
+      rawSet(slice as any);
+    }
+  };
+
+  return {
+    namespace: 'Paperclip.OrderingSystem.Domain',
   nodes: [],
   edges: [],
   activeTool: 'Select',
   customEndpoints: [],
+  dtos: [],
+  canUndo: false,
+  canRedo: false,
+
+  undo: () => {
+    if (pastStates.length === 0) return;
+    const prev = pastStates.pop();
+    const current = {
+      nodes: JSON.parse(JSON.stringify(get().nodes || [])),
+      edges: JSON.parse(JSON.stringify(get().edges || [])),
+      customEndpoints: JSON.parse(JSON.stringify(get().customEndpoints || [])),
+      dtos: JSON.parse(JSON.stringify(get().dtos || [])),
+      namespace: get().namespace
+    };
+    futureStates.push(current);
+    rawSet({
+      ...prev,
+      canUndo: pastStates.length > 0,
+      canRedo: true
+    });
+  },
+
+  redo: () => {
+    if (futureStates.length === 0) return;
+    const next = futureStates.pop();
+    const current = {
+      nodes: JSON.parse(JSON.stringify(get().nodes || [])),
+      edges: JSON.parse(JSON.stringify(get().edges || [])),
+      customEndpoints: JSON.parse(JSON.stringify(get().customEndpoints || [])),
+      dtos: JSON.parse(JSON.stringify(get().dtos || [])),
+      namespace: get().namespace
+    };
+    pastStates.push(current);
+    rawSet({
+      ...next,
+      canUndo: true,
+      canRedo: futureStates.length > 0
+    });
+  },
+  ollamaHost: localStorage.getItem('ollama_host') || 'http://edgexpert-c1ad.local:11434',
+  ollamaModel: localStorage.getItem('ollama_model') || 'qwen3-coder:30b',
+  ollamaModels: JSON.parse(localStorage.getItem('ollama_models') || '[]'),
+
+  setOllamaHost: (host) => {
+    localStorage.setItem('ollama_host', host);
+    set({ ollamaHost: host });
+  },
+  setOllamaModel: (model) => {
+    localStorage.setItem('ollama_model', model);
+    set({ ollamaModel: model });
+  },
+  fetchOllamaModels: async () => {
+    const host = get().ollamaHost;
+    if (!host) return;
+    try {
+      const response = await fetch(`http://localhost:5100/api/ai/models?host=${encodeURIComponent(host)}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch models: ${response.statusText}`);
+      }
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        localStorage.setItem('ollama_models', JSON.stringify(data));
+        set({ ollamaModels: data });
+        if (data.length > 0 && !data.includes(get().ollamaModel)) {
+          get().setOllamaModel(data[0]);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      throw err;
+    }
+  },
 
   addCustomEndpoint: () => set((state) => ({
     customEndpoints: [
@@ -73,6 +232,23 @@ export const useStore = create<StoreState>((set, get) => ({
 
   deleteCustomEndpoint: (index) => set((state) => ({
     customEndpoints: state.customEndpoints.filter((_, i) => i !== index)
+  })),
+
+  addDto: (name) => set((state) => ({
+    dtos: [
+      ...state.dtos,
+      { name: name || `Dto${state.dtos.length + 1}`, properties: [] }
+    ]
+  })),
+
+  updateDto: (index, updated) => set((state) => {
+    const list = [...state.dtos];
+    list[index] = { ...list[index], ...updated };
+    return { dtos: list };
+  }),
+
+  deleteDto: (index) => set((state) => ({
+    dtos: state.dtos.filter((_, i) => i !== index)
   })),
 
   // React Flow actions
@@ -422,6 +598,152 @@ export const useStore = create<StoreState>((set, get) => ({
       };
     }),
 
+  updateEdgeRelationship: (edgeId, newType) =>
+    set((state) => {
+      const edge = state.edges.find(e => e.id === edgeId);
+      if (!edge || !edge.source || !edge.target) return {};
+
+      const sourceNode = state.nodes.find(n => n.id === edge.source);
+      const targetNode = state.nodes.find(n => n.id === edge.target);
+      if (!sourceNode || !targetNode || sourceNode.type !== 'classNode') return {};
+
+      const targetName = targetNode.type === 'classNode'
+        ? (targetNode as ClassNode).data.entity.name
+        : (targetNode as EnumNode).data.enum.name;
+
+      const oldType = edge.data?.relationshipType;
+      let updatedNodes = [...state.nodes];
+
+      // 1. Clean up old properties
+      if (oldType === 'Inheritance') {
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, baseClass: undefined }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      } else if (oldType === 'Composition') {
+        const propName = targetName.endsWith('s') ? `${targetName}List` : `${targetName}s`;
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, properties: cn.data.entity.properties.filter(p => p.name !== propName) }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      } else if (oldType === 'Association') {
+        const isEnum = targetNode.type === 'enumNode';
+        const propName = isEnum ? targetName : `${targetName}Id`;
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, properties: cn.data.entity.properties.filter(p => p.name !== propName) }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      }
+
+      // 2. Add new properties
+      if (newType === 'Inheritance') {
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, baseClass: targetName }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      } else if (newType === 'Composition') {
+        const propName = targetName.endsWith('s') ? `${targetName}List` : `${targetName}s`;
+        const newProp: Property = {
+          name: propName,
+          type: `List<${targetName}>`,
+          isKey: false,
+          isEnum: false,
+          attributes: [],
+        };
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            if (cn.data.entity.properties.some(p => p.name === propName)) return cn;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, properties: [...cn.data.entity.properties, newProp] }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      } else if (newType === 'Association') {
+        const isEnum = targetNode.type === 'enumNode';
+        const propName = isEnum ? targetName : `${targetName}Id`;
+        const propType = isEnum ? targetName : 'ObjectId';
+        const newProp: Property = {
+          name: propName,
+          type: propType,
+          isKey: false,
+          isEnum: isEnum,
+          attributes: isEnum ? [] : ['Index'],
+        };
+        updatedNodes = updatedNodes.map(node => {
+          if (node.id === sourceNode.id && node.type === 'classNode') {
+            const cn = node as ClassNode;
+            if (cn.data.entity.properties.some(p => p.name === propName)) return cn;
+            return {
+              ...cn,
+              data: {
+                ...cn.data,
+                entity: { ...cn.data.entity, properties: [...cn.data.entity.properties, newProp] }
+              }
+            } as AppNode;
+          }
+          return node;
+        });
+      }
+
+      // 3. Update edge data
+      const updatedEdges = state.edges.map(e => {
+        if (e.id === edgeId) {
+          return {
+            ...e,
+            data: { relationshipType: newType }
+          };
+        }
+        return e;
+      });
+
+      return {
+        nodes: updatedNodes,
+        edges: updatedEdges
+      };
+    }),
+
   updateClassNode: (nodeId, updatedData) =>
     set((state) => ({
       nodes: state.nodes.map((node) => {
@@ -639,19 +961,78 @@ export const useStore = create<StoreState>((set, get) => ({
       Namespace: namespace,
       Entities: entities,
       Enums: enums,
+      Dtos: get().dtos.map(d => ({
+        Name: d.name,
+        Properties: d.properties.map(p => ({
+          Name: p.name,
+          Type: p.type,
+          SourceEntity: p.sourceEntity,
+          SourceProperty: p.sourceProperty,
+          IsRequired: p.isRequired,
+          Attributes: p.attributes
+        }))
+      })),
       CustomEndpoints: get().customEndpoints.map(e => ({
         Route: e.route,
         Method: e.method,
         RequestType: e.requestType,
-        Roles: e.roles
+        Roles: e.roles,
+        OperationType: e.operationType || 'Custom',
+        TargetEntity: e.targetEntity,
+        FilterField: e.filterField,
+        FilterOperator: e.filterOperator,
+        FilterSourceValue: e.filterSourceValue,
+        Assignments: e.assignments
       })),
     };
   },
 
   exportToApiManifest: () => {
-    const { nodes, namespace, customEndpoints } = get();
-    const endpoints: any[] = [];
+    const { nodes, edges, namespace, customEndpoints } = get();
 
+    // ---- Build domain model (for Foundry.Mongo DAL) ----
+    const entities: any[] = [];
+    nodes.forEach((node) => {
+      if (node.type === 'classNode') {
+        const entity = (node as ClassNode).data.entity;
+        entities.push({
+          Name: entity.name,
+          BaseClass: entity.baseClass,
+          SoftDelete: entity.softDelete,
+          Auditable: entity.auditable,
+          Indexes: entity.indexes && entity.indexes.length > 0
+            ? entity.indexes.map((idx: Index) => ({ Fields: idx.fields, Unique: idx.unique }))
+            : undefined,
+        });
+      }
+    });
+
+    // ---- Discover relationships from edges for endpoint dependency hints ----
+    const compositionTargets = new Map<string, string[]>(); // container -> [contained]
+    const associationRefs = new Map<string, string[]>();   // source -> [referenced]
+    edges.forEach((edge) => {
+      if (edge.source && edge.target) {
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        const targetNode = nodes.find(n => n.id === edge.target);
+        if (!sourceNode || !targetNode || sourceNode.type !== 'classNode') return;
+        const relType = (edge.data as any)?.relationshipType;
+        if (relType === 'Composition') {
+          const tName = targetNode.type === 'classNode' ? targetNode.data.entity.name : targetNode.data.enum.name;
+          compositionTargets.set(sourceNode.data.entity.name, [
+            ...(compositionTargets.get(sourceNode.data.entity.name) || []),
+            tName
+          ]);
+        } else if (relType === 'Association') {
+          const tName = targetNode.type === 'classNode' ? targetNode.data.entity.name : targetNode.data.enum.name;
+          associationRefs.set(sourceNode.data.entity.name, [
+            ...(associationRefs.get(sourceNode.data.entity.name) || []),
+            tName
+          ]);
+        }
+      }
+    });
+
+    // ---- Build endpoints (for Foundry.Api engine) ----
     const pluralize = (word: string): string => {
       if (!word) return word;
       const lower = word.toLowerCase();
@@ -664,11 +1045,12 @@ export const useStore = create<StoreState>((set, get) => ({
       return word + 's';
     };
 
+    const endpoints: any[] = [];
     nodes.forEach((node) => {
       if (node.type === 'classNode') {
         const entity = (node as ClassNode).data.entity;
         const enabledMethods = entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'];
-        
+
         // Proper pluralization for route paths
         const routeName = pluralize(entity.name).toLowerCase();
         const route = `/api/v1/${routeName}`;
@@ -688,19 +1070,49 @@ export const useStore = create<StoreState>((set, get) => ({
           }
         });
 
-        endpoints.push({
+        const endpointEntry: any = {
           Route: route,
           Entity: entity.name,
           Methods: enabledMethods,
           Roles: roles,
-          Caching: Object.keys(caching).length > 0 ? caching : undefined
+          Caching: Object.keys(caching).length > 0 ? caching : undefined,
+        };
+
+        // Include relationship data so the API engine knows about navigation endpoints
+        const contained = compositionTargets.get(entity.name);
+        const refs = associationRefs.get(entity.name);
+        if (contained && contained.length > 0) {
+          endpointEntry.NavigationProperties = contained.map(name => ({ Name: name, Type: 'Composition' }));
+        }
+        if (refs && refs.length > 0) {
+          endpointEntry.ReferenceTargets = refs.map(name => ({ Name: name, Type: 'Association' }));
+        }
+
+        endpoints.push(endpointEntry);
+      }
+    });
+
+    // ---- Include enums from canvas ----
+    const enums: any[] = [];
+    nodes.forEach((node) => {
+      if (node.type === 'enumNode') {
+        enums.push({
+          Name: node.data.enum.name,
+          Values: node.data.enum.values,
         });
       }
     });
 
     return {
+      // Domain model — consumed by Foundry.Mongo DAL
       Namespace: namespace,
+      Entities: entities.length > 0 ? entities : undefined,
+      Enums: enums.length > 0 ? enums : undefined,
+
+      // API engine — consumed by Foundry.Api source generator
       Endpoints: endpoints,
+
+      // Custom business operations (from ApiDesigner)
       CustomEndpoints: customEndpoints.map(e => ({
         Route: e.route,
         Method: e.method,
@@ -877,16 +1289,58 @@ export const useStore = create<StoreState>((set, get) => ({
       route: e.Route || e.route || '/api/v1/custom',
       method: e.Method || e.method || 'POST',
       requestType: e.RequestType || e.requestType || 'CustomCommand',
-      roles: e.Roles || e.roles || ['Admin']
+      roles: e.Roles || e.roles || ['Admin'],
+      operationType: e.OperationType || e.operationType || 'Custom',
+      targetEntity: e.TargetEntity || e.targetEntity,
+      filterField: e.FilterField || e.filterField,
+      filterOperator: e.FilterOperator || e.filterOperator,
+      filterSourceValue: e.FilterSourceValue || e.filterSourceValue,
+      assignments: e.Assignments || e.assignments || []
+    }));
+
+    const dtosImported = (schema.Dtos || schema.dtos || []).map((d: any) => ({
+      name: d.Name || d.name || 'UnnamedDto',
+      properties: (d.Properties || d.properties || []).map((p: any) => ({
+        name: p.Name || p.name || 'Property',
+        type: p.Type || p.type || 'string',
+        sourceEntity: p.SourceEntity || p.sourceEntity,
+        sourceProperty: p.SourceProperty || p.sourceProperty,
+        isRequired: p.IsRequired !== undefined ? p.IsRequired : (p.isRequired !== undefined ? p.isRequired : false),
+        attributes: p.Attributes || p.attributes || []
+      }))
     }));
     
     set({
       namespace,
       nodes: newNodes,
       edges: newEdges,
-      customEndpoints: customEndpointsImported
+      customEndpoints: customEndpointsImported,
+      dtos: dtosImported
+    });
+  },
+
+  exportProject: () => {
+    const { namespace, nodes, edges, customEndpoints, dtos } = get();
+    return {
+      Namespace: namespace,
+      Nodes: nodes,
+      Edges: edges,
+      CustomEndpoints: customEndpoints,
+      Dtos: dtos
+    };
+  },
+
+  importProject: (project) => {
+    if (!project) return;
+    set({
+      namespace: project.Namespace || project.namespace || 'Paperclip.OrderingSystem.Domain',
+      nodes: project.Nodes || project.nodes || [],
+      edges: project.Edges || project.edges || [],
+      customEndpoints: project.CustomEndpoints || project.customEndpoints || [],
+      dtos: project.Dtos || project.dtos || []
     });
   },
 
   setCanvasData: (nodes, edges) => set({ nodes, edges }),
-}));
+  };
+});

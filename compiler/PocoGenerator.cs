@@ -24,6 +24,29 @@ namespace Foundry.Schema.Compiler
                 result[entity.Name] = entityCode;
             }
 
+            // Generate DTOs
+            if (schema.Dtos != null)
+            {
+                foreach (var dto in schema.Dtos)
+                {
+                    var dtoCode = GenerateDto(dto, schema.Namespace);
+                    result[dto.Name] = dtoCode;
+                }
+            }
+
+            // Generate Custom Endpoint Handlers
+            if (schema.CustomEndpoints != null)
+            {
+                foreach (var ep in schema.CustomEndpoints)
+                {
+                    if (string.IsNullOrEmpty(ep.RequestType) || ep.RequestType.Equals("Void", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var handlerCode = GenerateHandler(ep, schema.Namespace);
+                    result[$"Handlers/{ep.RequestType}Handler"] = handlerCode;
+                }
+            }
+
             return result;
         }
 
@@ -70,19 +93,40 @@ public enum {enumDef.Name}
                 var initKeyword = "get; init"; // default to get; init for records
 
                 var attributes = new List<string>();
-                if (prop.Attributes.Contains("UniqueIndex") || prop.Attributes.Contains("Unique"))
-                    attributes.Add("[Indexed(Unique = true)]");
-                else if (prop.Attributes.Contains("Index"))
-                    attributes.Add("[Indexed]");
-                
-                if (prop.Attributes.Contains("TextIndex"))
-                    attributes.Add("[TextIndexed]");
-                if (prop.Attributes.Contains("Encrypt"))
-                    attributes.Add("[SensitiveData(Protection = ProtectionType.Encrypt)]");
-                if (prop.Attributes.Contains("Mask"))
-                    attributes.Add("[SensitiveData(Protection = ProtectionType.Mask)]");
-                if (prop.Attributes.Contains("MaskEmail"))
-                    attributes.Add("[SensitiveData(Protection = ProtectionType.Mask, MaskingType = MaskingType.Email)]");
+                foreach (var attr in prop.Attributes)
+                {
+                    if (attr == "UniqueIndex" || attr == "Unique")
+                        attributes.Add("[Indexed(Unique = true)]");
+                    else if (attr == "Index")
+                        attributes.Add("[Indexed]");
+                    else if (attr == "TextIndex")
+                        attributes.Add("[TextIndexed]");
+                    else if (attr == "Required")
+                        attributes.Add("[Required]");
+                    else if (attr == "Encrypt")
+                        attributes.Add("[SensitiveData(Protection = ProtectionType.Encrypt)]");
+                    else if (attr == "Mask")
+                        attributes.Add("[SensitiveData(Protection = ProtectionType.Mask)]");
+                    else if (attr == "MaskEmail")
+                        attributes.Add("[SensitiveData(Protection = ProtectionType.Mask, MaskingType = MaskingType.Email)]");
+                    else if (attr.StartsWith("MinLength(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("MaxLength(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("Range(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("Regex(", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var pattern = attr.Substring(6, attr.Length - 7);
+                        attributes.Add($"[RegularExpression({pattern})]");
+                    }
+                    else if (attr.Equals("Email", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[EmailAddress]");
+                    else if (attr.Equals("Url", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[Url]");
+                    else if (attr.Equals("Phone", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[Phone]");
+                }
 
                 var attributeLines = string.Join("\n    ", attributes);
                 var attributeLine = string.IsNullOrEmpty(attributeLines) ? "" : $"    {attributeLines}\n";
@@ -110,14 +154,22 @@ public enum {enumDef.Name}
             if (!string.IsNullOrEmpty(propertyLines))
                 propertyLines = "\n" + propertyLines + "\n";
 
+            var partitionAttribute = entity.Partitioned
+                ? $"[Partitioned({entity.ArchiveThresholdYears})]\n"
+                : "";
+
+            var extraImports = entity.Partitioned
+                ? "\nusing Foundry.Core.Attributes;"
+                : "";
+
             return $@"using System;
+using System.ComponentModel.DataAnnotations;
 using MongoDB.Bson;
-using FoundryMongo.Domain.Entities;
-using FoundryMongo.Domain.Filters;
+using Foundry.Core.Entities;{extraImports}
 
 namespace {@namespace};
 
-public record {entity.Name} : {interfaceList}
+{partitionAttribute}public record {entity.Name} : {interfaceList}
 {{{propertyLines}}}";
         }
 
@@ -136,6 +188,168 @@ public record {entity.Name} : {interfaceList}
                 "objectid" => "ObjectId",
                 _ => schemaType
             };
+        }
+
+        private static string GenerateDto(DtoModel dto, string @namespace)
+        {
+            var properties = new List<string>();
+            foreach (var prop in dto.Properties)
+            {
+                var type = MapType(prop.Type);
+                var requiredKeyword = prop.IsRequired ? "required " : "";
+                var initKeyword = "get; init";
+
+                var attributes = new List<string>();
+                foreach (var attr in prop.Attributes)
+                {
+                    if (attr == "Required")
+                        attributes.Add("[Required]");
+                    else if (attr.StartsWith("MinLength(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("MaxLength(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("Range(", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add($"[{attr}]");
+                    else if (attr.StartsWith("Regex(", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var pattern = attr.Substring(6, attr.Length - 7);
+                        attributes.Add($"[RegularExpression({pattern})]");
+                    }
+                    else if (attr.Equals("Email", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[EmailAddress]");
+                    else if (attr.Equals("Url", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[Url]");
+                    else if (attr.Equals("Phone", StringComparison.OrdinalIgnoreCase))
+                        attributes.Add("[Phone]");
+                }
+
+                var attributeLines = string.Join("\n    ", attributes);
+                var attributeLine = string.IsNullOrEmpty(attributeLines) ? "" : $"    {attributeLines}\n";
+
+                var defaultValue = "";
+                if (type == "string")
+                    defaultValue = " = string.Empty;";
+                else if (type == "bool")
+                    defaultValue = " = false;";
+                else if (type == "int" || type == "decimal" || type == "double" || type == "float")
+                    defaultValue = " = 0;";
+
+                properties.Add($"{attributeLine}    public {requiredKeyword}{type} {prop.Name} {{ {initKeyword}; }}{defaultValue}");
+            }
+
+            var propertyLines = string.Join("\n\n", properties);
+            if (!string.IsNullOrEmpty(propertyLines))
+                propertyLines = "\n" + propertyLines + "\n";
+
+            return $@"using System;
+using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson;
+
+namespace {@namespace};
+
+public record {dto.Name}
+{{{propertyLines}}}";
+        }
+
+        private static string GenerateHandler(CustomEndpoint ep, string @namespace)
+        {
+            var handlerName = ep.RequestType + "Handler";
+            var responseType = ep.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) 
+                ? ep.RequestType.Replace("Query", "Response").Replace("Request", "Response") 
+                : "bool";
+            
+            var repoType = !string.IsNullOrEmpty(ep.TargetEntity) ? $"IRepository<{ep.TargetEntity}>" : null;
+
+            var newResponseExpr = $"new {responseType}";
+            var newDtoExpr = $"new {ep.TargetEntity}Dto";
+            var newEntityExpr = $"new {ep.TargetEntity}";
+
+            string body = "";
+            if (ep.OperationType.Equals("Query", StringComparison.OrdinalIgnoreCase))
+            {
+                body = $@"        var items = await _repository.FindAsync(
+            x => x.{ep.FilterField ?? "Id"} == request.{ep.FilterSourceValue ?? "Id"},
+            cancellationToken: cancellationToken);
+
+        return {newResponseExpr}
+        {{
+            // Auto-projected from {ep.TargetEntity} records
+            Items = items.Select(x => {newDtoExpr}
+            {{
+                // Property mappings appear here
+            }}).ToList()
+        }};";
+            }
+            else if (ep.OperationType.Equals("Update", StringComparison.OrdinalIgnoreCase))
+            {
+                var assignmentsCode = "";
+                if (ep.Assignments != null)
+                {
+                    assignmentsCode = string.Join("\n", ep.Assignments.Select(a => 
+                        $"        entity.{a.EntityProperty} = request.{a.SourceValue};"));
+                }
+
+                body = $@"        var entity = await _repository.GetByIdAsync(request.{ep.FilterSourceValue ?? "Id"});
+        if (entity == null)
+        {{
+            return false;
+        }}
+
+        // Apply visual assignments
+{assignmentsCode}
+
+        await _repository.UpdateAsync(entity);
+        return true;";
+            }
+            else if (ep.OperationType.Equals("Insert", StringComparison.OrdinalIgnoreCase))
+            {
+                body = $@"        var entity = {newEntityExpr}
+        {{
+            // Auto-mapped from request payload properties
+        }};
+
+        await _repository.AddAsync(entity);
+        return true;";
+            }
+            else
+            {
+                body = @"        // Write your custom MediatR query/command logic here
+        throw new NotImplementedException(""Custom logic handler."");";
+            }
+
+            var fieldDeclaration = repoType != null ? $"    private readonly {repoType} _repository;\n" : "";
+            
+            var constructor = repoType != null 
+                ? $@"    public {handlerName}({repoType} repository)
+    {{
+        _repository = repository;
+    }}"
+                : $@"    public {handlerName}()
+    {{
+    }}";
+
+            return $@"using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using MediatR;
+using MongoDB.Bson;
+using Foundry.Core.Entities;
+using FoundryMongo.Repositories;
+using {@namespace};
+
+namespace {@namespace}.Handlers;
+
+public class {handlerName} : IRequestHandler<{ep.RequestType}, {responseType}>
+{{
+{fieldDeclaration}
+{constructor}
+
+    public async Task<{responseType}> Handle({ep.RequestType} request, CancellationToken cancellationToken)
+    {{
+{body}
+    }}
+}}";
         }
     }
 }

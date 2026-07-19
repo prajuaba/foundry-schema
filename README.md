@@ -43,6 +43,18 @@ Use the collapsible AI Prompt box on the left toolbar to describe your domain ad
 ### 3. Save to Workspace
 Inside the C# POCO modal, specify an output directory path (e.g. `../foundry-mongo/src/Domain/Entities`) and click **"Save to Workspace"** to write all generated C# record files directly to disk.
 
+### 4. Undo / Redo Operational History
+Tracks all operations (dragging nodes, adding properties, customizing endpoints) in an undo/redo stack in Zustand state. Micro-dragging movements are automatically ignored to optimize the history stack.
+
+### 5. Print-to-Page Class Diagram Export
+Ensures the class diagram canvas scales and fits onto a single landscape page for clean exporting to PDF/image formats. Controls, headers, sidebars, and dialogue widgets are automatically hidden during print rendering.
+
+### 6. Interactive Navigable MiniMap
+Allows panning and zooming directly inside the minimap mask to instantly navigate massive diagrams.
+
+### 7. Light / Dark Theme Custom Toggling
+Toggles the entire canvas, UML node cards, textboxes, and sidebars between light and dark modes with a dedicated button in the header toolbar.
+
 ---
 
 ## Packaging the Compiler CLI Globally

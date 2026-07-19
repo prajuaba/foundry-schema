@@ -37,11 +37,39 @@ export interface Enum {
   values: string[];
 }
 
+export interface Assignment {
+  entityProperty: string;
+  sourceType: 'RequestProperty' | 'Constant';
+  sourceValue: string;
+}
+
 export interface CustomEndpoint {
   route: string;
   method: string;
   requestType: string;
   roles: string[];
+  
+  // Visual Data Operation Config
+  operationType?: 'Custom' | 'Query' | 'Update' | 'Insert';
+  targetEntity?: string;
+  filterField?: string;
+  filterOperator?: 'Equals' | 'Contains' | 'GreaterThan';
+  filterSourceValue?: string;
+  assignments?: Assignment[];
+}
+
+export interface DtoProperty {
+  name: string;
+  type: string;
+  sourceEntity?: string;
+  sourceProperty?: string;
+  isRequired: boolean;
+  attributes: string[];
+}
+
+export interface DtoModel {
+  name: string;
+  properties: DtoProperty[];
 }
 
 export type ClassNode = Node<{ entity: Entity }, 'classNode'>;

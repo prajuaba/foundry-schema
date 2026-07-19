@@ -133,7 +133,32 @@ var systemInstructions = "You are a database designer. Respond ONLY with raw JSO
 
 ---
 
-## 5. Rebuilding & Deploying
+## 5. Visual Studio Enhancements
+
+### A. Action History (Undo / Redo)
+The visual schema designer tracks states in a dedicated past and future stack within the Zustand state manager (`store.ts`):
+- Action changes (dragging nodes, adding fields, compiling endpoints, etc.) automatically trigger a deep clone of the current state and commit to the `pastStates` history queue.
+- micro-updates (such as continuous dragging coordinate movements) are throttled/ignored to prevent flooding the undo history stacks.
+- Exposed actions `undo()` and `redo()` restore the workspace state by delegating to Zustand's raw `set` override with the `replace` payload enabled.
+
+### B. Print-to-Page Class Diagram Export
+To export high-resolution, scale-to-fit class diagrams as single landscape PDF or image pages:
+- CSS print-media media queries (defined in `index.css`) selectively hide absolute/fixed panels (such as side bars, dialog buttons, headers) using custom target exclusion selectors instead of generic absolute classes (allowing visual class cards, which are absolute-positioned nodes, to remain fully rendered on the viewport).
+- The print action triggers a React Flow viewport fit calculation (`fitView`), automatically aligning and zooming all canvas entities to fit onto a single page right before displaying the system print prompt dialog.
+
+### C. Navigable Interactive MiniMap
+- The React Flow `<MiniMap />` is configured to support interactive panning and zooming behaviors. Users can drag the mini viewport mask to navigate large canvas graphs instantly.
+
+### D. Tailwind CSS v4 Class-Based Dark Mode
+- Built using Tailwind CSS v4 CSS-first configuration directives in `index.css`:
+  ```css
+  @custom-variant dark (&:where(.dark, .dark *));
+  ```
+- Toggling the `.dark` class on the root element triggers custom state-responsive light mode defaults (`bg-slate-100`, `text-slate-800`) vs. dark mode custom properties (`dark:bg-slate-950`, `dark:text-white`) dynamically across all cards, dialogs, sidebars, and input boxes.
+
+---
+
+## 6. Rebuilding & Deploying
 
 ### Visual UI build
 ```bash

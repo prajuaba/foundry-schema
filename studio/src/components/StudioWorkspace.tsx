@@ -5,14 +5,18 @@ import {
   Background,
   MiniMap,
   type NodeTypes,
-  type EdgeTypes
+  type EdgeTypes,
+  ConnectionLineType,
+  useReactFlow
 } from '@xyflow/react';
 import { useStore } from '../store';
+import type { ClassNode } from '../types';
 import UmlClassNode from './UmlClassNode';
 import { UmlEnumNode } from './UmlEnumNode';
 import { OrthogonalEdge } from './OrthogonalEdge';
-import type { Property, Index, ClassNode, EnumNode } from '../types';
-import { Play, Download, Code, Plus, Trash2, Check, Settings, Shield, Key, Sparkles } from 'lucide-react';
+import { InspectorPanel } from './InspectorPanel';
+import { ApiDesigner } from './ApiDesigner';
+import { Play, Download, Upload, Code, Plus, Check, Settings, Sparkles, Database, Globe, Plug, Undo2, Redo2, Sun, Moon } from 'lucide-react';
 
 const nodeTypes: NodeTypes = {
   classNode: UmlClassNode,
@@ -97,6 +101,121 @@ public enum ${enumDef.Name}
 }`;
 };
 
+const generateDtoCsCode = (dto: any, namespace: string) => {
+  const propertiesLines: string[] = [];
+  (dto.Properties || dto.properties || []).forEach((prop: any) => {
+    const requiredKeyword = prop.IsRequired || prop.isRequired ? 'required ' : '';
+    const initKeyword = 'get; init;';
+    let defaultValue = '';
+    if (prop.Type === 'string' || prop.type === 'string') defaultValue = ' = string.Empty;';
+    else if (prop.Type === 'bool' || prop.type === 'bool') defaultValue = ' = false;';
+    else if (['int', 'decimal', 'double', 'float'].includes(prop.Type || prop.type)) defaultValue = ' = 0;';
+
+    const attributes: string[] = [];
+    const attrs = prop.Attributes || prop.attributes || [];
+    if (attrs.includes('Email')) attributes.push('[EmailAddress]');
+    if (attrs.includes('Phone')) attributes.push('[Phone]');
+    if (attrs.includes('Url')) attributes.push('[Url]');
+    const attrPrefix = attributes.length > 0 ? '    ' + attributes.join('\n    ') + '\n' : '';
+
+    propertiesLines.push(`${attrPrefix}    public ${requiredKeyword}${prop.Type || prop.type} ${prop.Name || prop.name} { ${initKeyword} }${defaultValue}`);
+  });
+
+  const propertiesBody = propertiesLines.length > 0 ? '\n' + propertiesLines.join('\n\n') + '\n' : '';
+
+  return `using System;
+using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson;
+
+namespace ${namespace};
+
+public record ${dto.Name || dto.name}
+{${propertiesBody}}`;
+};
+
+const generateHandlerCsCode = (ep: any, namespace: string) => {
+  const reqType = ep.RequestType || ep.requestType;
+  const targetEntity = ep.TargetEntity || ep.targetEntity;
+  const operationType = ep.OperationType || ep.operationType || 'Custom';
+  const filterField = ep.FilterField || ep.filterField;
+  const filterSourceValue = ep.FilterSourceValue || ep.filterSourceValue;
+  const assignments = ep.Assignments || ep.assignments || [];
+
+  const handlerName = reqType + "Handler";
+  const responseType = ep.Method === 'GET' || ep.method === 'GET' ? (reqType.replace("Query", "Response").replace("Request", "Response")) : "bool";
+  const repoType = targetEntity ? `IRepository<${targetEntity}>` : null;
+
+  let body = "";
+  if (operationType === 'Query') {
+    body = `        var items = await _repository.FindAsync(
+            x => x.${filterField || 'Id'} == request.${filterSourceValue || 'Id'},
+            cancellationToken: cancellationToken);
+
+        return new ${responseType}
+        {
+            // Auto-projected from ${targetEntity} records
+            Items = items.Select(x => new ${targetEntity}Dto
+            {
+                // Property mappings appear here
+            }).ToList()
+        };`;
+  } else if (operationType === 'Update') {
+    body = `        var entity = await _repository.GetByIdAsync(request.${filterSourceValue || 'Id'});
+        if (entity == null)
+        {
+            return false;
+        }
+
+        // Apply visual assignments
+` + assignments.map((a: any) => `        entity.${a.entityProperty || a.EntityProperty} = request.${a.sourceValue || a.SourceValue};`).join('\n') + `
+
+        await _repository.UpdateAsync(entity);
+        return true;`;
+  } else if (operationType === 'Insert') {
+    body = `        var entity = new ${targetEntity}
+        {
+            // Auto-mapped from request payload properties
+        };
+
+        await _repository.AddAsync(entity);
+        return true;`;
+  } else {
+    body = `        // Write your custom MediatR query/command logic here
+        throw new NotImplementedException("Custom logic handler.");`;
+  }
+
+  const constructor = repoType ? `    private readonly ${repoType} _repository;
+
+    public ${handlerName}(${repoType} repository)
+    {
+        _repository = repository;
+    }
+` : `    public ${handlerName}()
+    {
+    }`;
+
+  return `using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using MediatR;
+using MongoDB.Bson;
+using FoundryCore.Entities;
+using FoundryMongo.Repositories;
+using ${namespace};
+
+namespace ${namespace}.Handlers;
+
+public class ${handlerName} : IRequestHandler<${reqType}, ${responseType}>
+{
+${constructor}
+    public async Task<${responseType}> Handle(${reqType} request, CancellationToken cancellationToken)
+    {
+${body}
+    }
+}`;
+};
+
 export const StudioWorkspace: React.FC = () => {
   const { 
     namespace, 
@@ -110,23 +229,20 @@ export const StudioWorkspace: React.FC = () => {
     setNamespace,
     addClassNode,
     addEnumNode,
-    deleteNode,
-    updateClassNode,
-    updateEnumNode,
-    updateProperty,
-    addProperty,
-    deleteProperty,
-    addIndex,
-    deleteIndex,
-    updateIndex,
     exportToSchema,
     importFromSchema,
+    exportProject,
+    importProject,
+    exportToApiManifest,
+    ollamaHost,
+    ollamaModel,
     customEndpoints,
-    addCustomEndpoint,
-    updateCustomEndpoint,
-    deleteCustomEndpoint,
-    exportToApiManifest
+    undo,
+    redo,
+    canUndo,
+    canRedo
   } = useStore();
+  const { fitView } = useReactFlow();
 
   const [aiPrompt, setAiPrompt] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -138,19 +254,76 @@ export const StudioWorkspace: React.FC = () => {
   const [manifestPath, setManifestPath] = useState<string>('../../samples/Foundry.Api.Sample/api-manifest.json');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [expandedPropIdx, setExpandedPropIdx] = useState<number | null>(null);
+  const [activeView, setActiveView] = useState<'schema' | 'api'>('schema');
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return 'dark';
+  });
 
-  const selectedNode = useMemo(() => {
-    return nodes.find(n => n.selected) || null;
-  }, [nodes]);
+  React.useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
-  const classNodeSelected = useMemo(() => {
-    return (selectedNode && selectedNode.type === 'classNode') ? (selectedNode as ClassNode) : null;
-  }, [selectedNode]);
+  const handleExportPdf = useCallback(() => {
+    // 1. Force the diagram to fit within the viewport dimensions
+    fitView({ padding: 0.08, includeHiddenNodes: true });
 
-  const enumNodeSelected = useMemo(() => {
-    return (selectedNode && selectedNode.type === 'enumNode') ? (selectedNode as EnumNode) : null;
-  }, [selectedNode]);
+    // 2. Trigger printing after UI transitions finish
+    setTimeout(() => {
+      const style = document.createElement('style');
+      style.id = 'print-diagram-style';
+      style.innerHTML = `
+        @media print {
+          @page {
+            size: landscape;
+            margin: 0 !important;
+          }
+          body, html, #root {
+            width: 100vw !important;
+            height: 100vh !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background-color: white !important;
+            color: black !important;
+          }
+          .react-flow-wrapper {
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 99999 !important;
+            background-color: white !important;
+          }
+          .react-flow__controls,
+          .react-flow__minimap,
+          .react-flow__attribution,
+          button,
+          input,
+          label,
+          .absolute,
+          .fixed {
+            display: none !important;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      window.print();
+      const styleToRemove = document.getElementById('print-diagram-style');
+      if (styleToRemove) {
+        document.head.removeChild(styleToRemove);
+      }
+    }, 250);
+  }, [fitView]);
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, _node: any) => {
     // Selection is handled automatically by React Flow state updates
@@ -178,18 +351,72 @@ export const StudioWorkspace: React.FC = () => {
 
   const generatedCsFiles = useMemo(() => {
     const files: Record<string, string> = {};
+    
     schemaJson.Entities.forEach((entity: any) => {
       if (entity.Name) {
         files[`${entity.Name}.cs`] = generateCsCode(entity, namespace);
       }
     });
+
     schemaJson.Enums.forEach((enumDef: any) => {
       if (enumDef.Name) {
         files[`${enumDef.Name}.cs`] = generateEnumCode(enumDef, namespace);
       }
     });
+
+    (schemaJson.Dtos || schemaJson.dtos || []).forEach((dto: any) => {
+      if (dto.Name) {
+        files[`${dto.Name}.cs`] = generateDtoCsCode(dto, namespace);
+      }
+    });
+
+    (schemaJson.CustomEndpoints || schemaJson.customEndpoints || []).forEach((ep: any) => {
+      const reqType = ep.RequestType || ep.requestType;
+      if (reqType && reqType !== 'Void') {
+        files[`Handlers/${reqType}Handler.cs`] = generateHandlerCsCode(ep, namespace);
+      }
+    });
+
     return files;
   }, [schemaJson, namespace]);
+
+  const apiMetrics = useMemo(() => {
+    const entities = nodes
+      .filter(n => n.type === 'classNode')
+      .map(n => (n as ClassNode).data.entity);
+    
+    let totalRoutes = 0;
+    let securedMethods = 0;
+    let cachedRoutes = 0;
+
+    entities.forEach(entity => {
+      const enabledMethods = entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'];
+      totalRoutes += enabledMethods.length;
+      
+      enabledMethods.forEach(method => {
+        if (entity.apiRoles && entity.apiRoles[method] && entity.apiRoles[method].length > 0) {
+          securedMethods++;
+        }
+        if (entity.apiCaching && entity.apiCaching[method] && entity.apiCaching[method].enabled) {
+          cachedRoutes++;
+        }
+      });
+    });
+
+    totalRoutes += customEndpoints.length;
+    customEndpoints.forEach((ep: any) => {
+      if (ep.roles && ep.roles.length > 0) {
+        securedMethods++;
+      }
+    });
+
+    return {
+      totalRoutes,
+      customRoutes: customEndpoints.length,
+      securedMethods,
+      cachedRoutes
+    };
+  }, [nodes, customEndpoints]);
 
   // Set default preview file
   const previewFiles = Object.keys(generatedCsFiles);
@@ -208,6 +435,38 @@ export const StudioWorkspace: React.FC = () => {
     });
   };
 
+  const downloadManifest = () => {
+    const manifestObj = exportToApiManifest();
+    const blob = new Blob([JSON.stringify(manifestObj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'api-manifest.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAllWithManifest = () => {
+    // Download POCOs
+    previewFiles.forEach(file => {
+      const blob = new Blob([generatedCsFiles[file]], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file;
+      a.click();
+    });
+    // Download manifest
+    const manifestObj = exportToApiManifest();
+    const blob = new Blob([JSON.stringify(manifestObj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'api-manifest.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const downloadJson = () => {
     const blob = new Blob([JSON.stringify(schemaJson, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -215,6 +474,36 @@ export const StudioWorkspace: React.FC = () => {
     a.href = url;
     a.download = 'schema.json';
     a.click();
+  };
+
+  const handleSaveProject = () => {
+    const projectData = exportProject();
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(projectData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `${namespace.toLowerCase() || 'schema'}.foundry`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  const handleLoadProject = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileReader = new FileReader();
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      fileReader.readAsText(files[0], "UTF-8");
+      fileReader.onload = (e) => {
+        try {
+          const target = e.target;
+          if (target && typeof target.result === 'string') {
+            const projectObj = JSON.parse(target.result);
+            importProject(projectObj);
+          }
+        } catch (err) {
+          alert('Failed to parse foundry project file. Make sure it is a valid project JSON.');
+        }
+      };
+    }
   };
 
   const handleAiSubmit = async () => {
@@ -228,6 +517,8 @@ export const StudioWorkspace: React.FC = () => {
         body: JSON.stringify({
           Prompt: aiPrompt,
           CurrentSchema: schemaJson,
+          OllamaHost: ollamaHost,
+          OllamaModel: ollamaModel,
         }),
       });
       if (!response.ok) {
@@ -288,8 +579,12 @@ export const StudioWorkspace: React.FC = () => {
         }),
       });
 
-      setSaveMessage('Saved successfully to workspace!');
-      setTimeout(() => setSaveMessage(null), 5000);
+      const entityCount = nodes.filter((n) => n.type === 'classNode').length;
+      const enumCount = nodes.filter((n) => n.type === 'enumNode').length;
+      setSaveMessage(
+        `✓ ${entityCount} entity${entityCount !== 1 ? 'ies' : 'y'} + ${enumCount} enum\n  POCOs → ${outputPath}\n  Manifest → ${manifestPath}`
+      );
+      setTimeout(() => setSaveMessage(null), 8000);
     } catch (err: any) {
       setSaveMessage(`Error: ${err.message || 'Failed to save'}`);
     } finally {
@@ -298,707 +593,385 @@ export const StudioWorkspace: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 font-sans">
+    <div className="flex flex-col h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans transition-colors duration-200">
       {/* Top Bar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md z-10">
+      <div className="flex items-center justify-between px-6 py-3 bg-white/90 border-b border-slate-200 dark:bg-slate-900/90 dark:border-slate-800 backdrop-blur-md z-10 print-hide transition-colors duration-200">
         <div className="flex items-center gap-3">
           <Settings className="w-6 h-6 text-sky-500 animate-spin-slow" />
           <h1 className="text-lg font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
             Foundry.Schema.Studio
           </h1>
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all cursor-pointer"
+            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400 animate-pulse" /> : <Moon className="w-4 h-4 text-slate-600" />}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Designer Tabs */}
+          <div className="flex bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-0.5 rounded shadow-inner transition-colors duration-200">
+            <button
+              onClick={() => setActiveView('schema')}
+              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+                activeView === 'schema' 
+                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5" /> Schema Designer
+            </button>
+            <button
+              onClick={() => setActiveView('api')}
+              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+                activeView === 'api' 
+                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" /> API Designer
+            </button>
+          </div>
+
+          {/* Undo / Redo Actions */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-0.5 rounded shadow-inner transition-colors duration-200">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white disabled:opacity-25 disabled:hover:text-slate-500 dark:disabled:hover:text-slate-400 rounded transition-all cursor-pointer select-none"
+              title="Undo Last Action"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <div className="w-[1px] h-3.5 bg-slate-200 dark:bg-slate-800" />
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white disabled:opacity-25 disabled:hover:text-slate-500 dark:disabled:hover:text-slate-400 rounded transition-all cursor-pointer select-none"
+              title="Redo Action"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
         
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 font-mono">NAMESPACE:</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">NAMESPACE:</span>
             <input
               type="text"
               value={namespace}
               onChange={(e) => setNamespace(e.target.value)}
-              className="px-3 py-1 bg-slate-950 border border-slate-800 rounded font-mono text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 w-64 text-sky-300"
+              className="px-3 py-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded font-mono text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 w-44 text-slate-800 dark:text-sky-300 transition-colors duration-200"
             />
           </div>
 
-          <div className="flex gap-2">
-            <button 
-              onClick={() => { setPreviewTab('JSON'); setShowPreviewModal(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs transition-all font-medium"
-            >
-              <Code className="w-3.5 h-3.5" />
-              Preview JSON
-            </button>
-            <button 
-              onClick={() => { setPreviewTab('C#'); setShowPreviewModal(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs transition-all font-medium"
-            >
-              <Play className="w-3.5 h-3.5" />
-              Preview C# POCOs
-            </button>
+          <div className="flex items-center gap-3">
+            {/* Project Storage Group */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-950/40 p-0.5 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm transition-colors duration-200">
+              <button 
+                onClick={() => document.getElementById('load-project-input')?.click()}
+                className="flex items-center gap-1 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-md text-xs transition-all font-semibold cursor-pointer select-none"
+                title="Load Project"
+              >
+                <Upload className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
+                <span>Load</span>
+              </button>
+              <div className="w-[1px] h-3.5 bg-slate-200 dark:bg-slate-800" />
+              <button 
+                onClick={handleSaveProject}
+                className="flex items-center gap-1 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-md text-xs transition-all font-semibold cursor-pointer select-none"
+                title="Save Project"
+              >
+                <Download className="w-3.5 h-3.5 text-sky-500 dark:text-sky-400" />
+                <span>Save</span>
+              </button>
+            </div>
+            <input 
+              id="load-project-input"
+              type="file" 
+              accept=".foundry" 
+              onChange={handleLoadProject} 
+              style={{ display: 'none' }} 
+            />
+            
+            {/* Preview Group */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-950/40 p-0.5 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm transition-colors duration-200">
+              <button 
+                onClick={() => { setPreviewTab('JSON'); setShowPreviewModal(true); }}
+                className="flex items-center gap-1 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-md text-xs transition-all font-semibold cursor-pointer select-none"
+                title="Preview JSON Schema"
+              >
+                <Code className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                <span>JSON</span>
+              </button>
+              <div className="w-[1px] h-3.5 bg-slate-200 dark:bg-slate-800" />
+              <button 
+                onClick={() => { setPreviewTab('C#'); setShowPreviewModal(true); }}
+                className="flex items-center gap-1 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-md text-xs transition-all font-semibold cursor-pointer select-none"
+                title="Preview C# POCOs"
+              >
+                <Play className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                <span>C# POCOs</span>
+              </button>
+            </div>
+
+            {/* Primary Action */}
             <button 
               onClick={downloadJson}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs transition-all font-medium shadow-lg shadow-sky-600/20"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold transition-all shadow-md shadow-sky-600/10 cursor-pointer select-none"
             >
               <Download className="w-3.5 h-3.5" />
-              Download Schema
+              <span>Download Schema</span>
             </button>
           </div>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Left Panel - Toolbox */}
-        <div className="w-64 bg-slate-900/50 border-r border-slate-800 p-4 flex flex-col gap-6 z-10 backdrop-blur-md">
-          <div>
-            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Editor Tools</h2>
-            <div className="flex flex-col gap-1.5">
-              {(['Select', 'Association', 'Composition', 'Inheritance'] as const).map(tool => (
-                <button
-                  key={tool}
-                  onClick={() => setActiveTool(tool)}
-                  className={`px-3 py-2 rounded text-left text-xs transition-all flex items-center justify-between ${
-                    activeTool === tool 
-                      ? 'bg-sky-500/10 border border-sky-500/30 text-sky-400 font-semibold' 
-                      : 'bg-slate-800/20 border border-transparent hover:bg-slate-800/40 text-slate-400'
-                  }`}
-                >
-                  <span>{tool === 'Select' ? 'Pointer/Select' : `${tool} Link`}</span>
-                  {activeTool === tool && <Check className="w-3.5 h-3.5 text-sky-400" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Add Elements</h2>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={handleAddClass}
-                className="flex flex-col items-center justify-center p-3 bg-slate-800/40 hover:bg-slate-800 border border-slate-800 rounded transition-all group"
-              >
-                <Plus className="w-5 h-5 text-sky-400 mb-1.5 group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-medium">Class Node</span>
-              </button>
-              
-              <button
-                onClick={handleAddEnum}
-                className="flex flex-col items-center justify-center p-3 bg-slate-800/40 hover:bg-slate-800 border border-slate-800 rounded transition-all group"
-              >
-                <Plus className="w-5 h-5 text-purple-400 mb-1.5 group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-medium">Enum Node</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-auto border-t border-slate-800 pt-4 flex flex-col gap-3">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
-              <span>AI Designer Assistant</span>
-            </div>
-            
-            <textarea
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Ask AI to add Customer class, link composition, etc..."
-              className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-slate-350 resize-none h-20 placeholder:text-slate-600 font-sans"
-            />
-
-            {aiError && (
-              <div className="text-[10px] text-red-400 bg-red-950/20 border border-red-900/30 p-2 rounded">
-                {aiError}
-              </div>
-            )}
-
-            <button
-              onClick={handleAiSubmit}
-              disabled={isAiLoading || !aiPrompt.trim()}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded text-xs font-semibold transition-all shadow-md shadow-sky-600/10 cursor-pointer"
-            >
-              {isAiLoading ? (
-                <span className="flex items-center gap-1">
-                  <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Thinking...
-                </span>
-              ) : (
-                <>Submit Prompt</>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Center Canvas */}
-        <div className="flex-1 relative h-full">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={handleNodeClick}
-            onClick={handleCanvasClick}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            fitView
-            className="bg-slate-950"
-          >
-            <Background color="#1e293b" />
-            <Controls className="bg-slate-900 border border-slate-800 text-white rounded-none" />
-            <MiniMap 
-              nodeColor={(node) => {
-                if (node.type === 'classNode') return '#38bdf8';
-                if (node.type === 'enumNode') return '#c084fc';
-                return '#64748b';
-              }}
-              className="bg-slate-900 border border-slate-800"
-            />
-            
-            {/* Custom SVG marker definitions for sharp orthogonal arrowheads */}
-            <svg style={{ position: 'absolute', width: 0, height: 0 }}>
-              <defs>
-                <marker 
-                  id="uml-inheritance" 
-                  viewBox="0 0 10 10" 
-                  refX="8" 
-                  refY="5" 
-                  markerWidth="8" 
-                  markerHeight="8" 
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 8 5 L 0 10 z" fill="#0f172a" stroke="#475569" strokeWidth="1.5" />
-                </marker>
-                
-                <marker 
-                  id="uml-composition" 
-                  viewBox="0 0 12 12" 
-                  refX="10" 
-                  refY="6" 
-                  markerWidth="10" 
-                  markerHeight="10" 
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 6 L 5 1 L 10 6 L 5 11 z" fill="#475569" stroke="#475569" strokeWidth="1.5" />
-                </marker>
-                
-                <marker 
-                  id="uml-association" 
-                  viewBox="0 0 10 10" 
-                  refX="8" 
-                  refY="5" 
-                  markerWidth="7" 
-                  markerHeight="7" 
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 1 L 8 5 L 0 9" fill="none" stroke="#475569" strokeWidth="1.5" />
-                </marker>
-              </defs>
-            </svg>
-          </ReactFlow>
-        </div>
-
-        {/* Right Panel - Property Inspector */}
-        <div className="w-80 bg-slate-900/90 border-l border-slate-800 p-5 overflow-y-auto z-10 backdrop-blur-md flex flex-col gap-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Property Inspector</h2>
-            {selectedNode && (
-              <button 
-                onClick={() => { deleteNode(selectedNode.id); }}
-                className="p-1 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors"
-                title="Delete node"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          {!selectedNode ? (
-            <div className="flex flex-col gap-6">
-              {/* Namespace Config */}
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] text-slate-500 font-mono block">C# NAMESPACE</label>
-                <input
-                  type="text"
-                  value={namespace}
-                  onChange={(e) => setNamespace(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-sm text-white focus:outline-none focus:border-sky-500 font-semibold"
-                />
-              </div>
-
-              {/* Custom Endpoints Config */}
-              <div className="flex flex-col gap-3 border-t border-slate-800 pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-slate-400">Custom Endpoints</h3>
-                  <button 
-                    onClick={addCustomEndpoint}
-                    className="flex items-center gap-1 text-[10px] text-sky-400 hover:text-sky-300 font-bold"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> ADD
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  {customEndpoints.length === 0 ? (
-                    <div className="text-center text-slate-600 text-xs py-6 italic border border-dashed border-slate-800 rounded">
-                      No custom endpoints configured. Click ADD to add.
-                    </div>
-                  ) : (
-                    customEndpoints.map((ep, idx) => (
-                      <div key={idx} className="flex flex-col gap-2 p-2.5 bg-slate-950/40 border border-slate-800 rounded relative group">
-                        <button
-                          onClick={() => deleteCustomEndpoint(idx)}
-                          className="absolute top-2 right-2 p-1 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Delete endpoint"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-
-                        <div>
-                          <label className="text-[9px] text-slate-500 font-mono block">ROUTE PATH</label>
-                          <input
-                            type="text"
-                            value={ep.route}
-                            onChange={(e) => updateCustomEndpoint(idx, { route: e.target.value })}
-                            className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                            placeholder="/api/v1/checkout"
-                          />
-                        </div>
-
-                        <div className="flex gap-2">
-                          <div className="flex-1">
-                            <label className="text-[9px] text-slate-500 font-mono block">METHOD</label>
-                            <select
-                              value={ep.method}
-                              onChange={(e) => updateCustomEndpoint(idx, { method: e.target.value })}
-                              className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                            >
-                              <option value="GET">GET</option>
-                              <option value="POST">POST</option>
-                              <option value="PUT">PUT</option>
-                              <option value="DELETE">DELETE</option>
-                            </select>
-                          </div>
-
-                          <div className="flex-2">
-                            <label className="text-[9px] text-slate-500 font-mono block">REQUEST TYPE (COMMAND)</label>
-                            <input
-                              type="text"
-                              value={ep.requestType}
-                              onChange={(e) => updateCustomEndpoint(idx, { requestType: e.target.value })}
-                              className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                              placeholder="PlaceOrderCommand"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="text-[9px] text-slate-500 font-mono block">ROLES (COMMA SEPARATED)</label>
-                          <input
-                            type="text"
-                            value={ep.roles.join(', ')}
-                            onChange={(e) => updateCustomEndpoint(idx, { roles: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                            className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                            placeholder="User, Admin"
-                          />
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : classNodeSelected ? (
-            <div className="flex flex-col gap-5">
-              {/* Class General Info */}
-              <div className="flex flex-col gap-3">
-                <div>
-                  <label className="text-[10px] text-slate-500 font-mono block mb-1">CLASS NAME</label>
-                  <input
-                    type="text"
-                    value={classNodeSelected.data.entity.name}
-                    onChange={(e) => updateClassNode(classNodeSelected.id, { name: e.target.value })}
-                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-sm text-white focus:outline-none focus:border-sky-500 font-semibold"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between bg-slate-950/40 p-2.5 border border-slate-800 rounded">
-                  <div className="flex items-center gap-1.5">
-                    <Shield className="w-3.5 h-3.5 text-sky-400" />
-                    <span className="text-xs font-medium">Soft Delete</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={classNodeSelected.data.entity.softDelete}
-                    onChange={(e) => updateClassNode(classNodeSelected.id, { softDelete: e.target.checked })}
-                    className="w-4 h-4 accent-sky-500 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between bg-slate-950/40 p-2.5 border border-slate-800 rounded">
-                  <div className="flex items-center gap-1.5">
-                    <Key className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="text-xs font-medium">Auditable</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={classNodeSelected.data.entity.auditable}
-                    onChange={(e) => updateClassNode(classNodeSelected.id, { auditable: e.target.checked })}
-                    className="w-4 h-4 accent-sky-500 cursor-pointer"
-                  />
-                </div>
-              </div>
-
-              {/* Properties Manager */}
-              <div className="flex flex-col gap-3 border-t border-slate-800 pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-slate-400">Attributes</h3>
-                  <button 
-                    onClick={() => addProperty(classNodeSelected.id)}
-                    className="flex items-center gap-1 text-[10px] text-sky-400 hover:text-sky-300 font-bold"
-                  >
-                    <Plus className="w-3 h-3" /> ADD
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {classNodeSelected.data.entity.properties.map((prop: Property, idx: number) => {
-                    const isExpanded = idx === expandedPropIdx;
-                    
-                    if (!isExpanded) {
-                      return (
-                        <div 
-                          key={idx} 
-                          onClick={() => setExpandedPropIdx(idx)}
-                          className="bg-slate-950/40 border border-slate-800 hover:border-slate-700 px-3 py-2 flex items-center justify-between rounded cursor-pointer group transition-all"
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-slate-500 font-mono text-xs">+</span>
-                            <span className="text-slate-200 font-medium text-xs truncate font-mono">
-                              {prop.name || <span className="text-slate-650 italic">unnamed</span>}
-                            </span>
-                            <span className="text-slate-500 text-[10px] font-mono">: {prop.type}</span>
-                          </div>
-                          
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {prop.isKey && <span className="text-[8px] bg-sky-500/10 text-sky-400 border border-sky-500/25 px-1 font-mono rounded">KEY</span>}
-                            {prop.attributes.includes('Required') && <span className="text-[8px] bg-red-500/10 text-red-400 border border-red-500/25 px-1 font-mono rounded">REQ</span>}
-                            {prop.attributes.includes('Encrypt') && <span className="text-[8px] bg-amber-500/10 text-amber-400 border border-amber-500/25 px-1 font-mono rounded">ENC</span>}
-                            
-                            <button
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                deleteProperty(classNodeSelected.id, idx); 
-                                if (expandedPropIdx === idx) setExpandedPropIdx(null); 
-                              }}
-                              className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
-                              title="Delete attribute"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div key={idx} className="bg-slate-950 border-2 border-sky-500/40 p-3.5 flex flex-col gap-2 rounded relative">
-                        <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-1">
-                          <span className="text-[9px] font-bold text-sky-400 font-mono">EDITING ATTRIBUTE #{idx + 1}</span>
-                          <div className="flex gap-1.5">
-                            <button
-                              onClick={() => setExpandedPropIdx(null)}
-                              className="px-2 py-0.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 rounded text-[9px] font-bold"
-                            >
-                              Collapse
-                            </button>
-                            <button
-                              onClick={() => { 
-                                deleteProperty(classNodeSelected.id, idx); 
-                                setExpandedPropIdx(null); 
-                              }}
-                              className="p-1 hover:bg-red-500/20 text-slate-450 hover:text-red-400 rounded transition-colors"
-                              title="Delete attribute"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-[9px] text-slate-500 font-mono block mb-0.5">NAME</label>
-                            <input
-                              type="text"
-                              value={prop.name}
-                              onChange={(e) => updateProperty(classNodeSelected.id, idx, { name: e.target.value })}
-                              className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] text-slate-500 font-mono block mb-0.5">TYPE</label>
-                            <select
-                              value={prop.type}
-                              onChange={(e) => updateProperty(classNodeSelected.id, idx, { type: e.target.value })}
-                              className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                            >
-                              <option value="string">string</option>
-                              <option value="ObjectId">ObjectId</option>
-                              <option value="int">int</option>
-                              <option value="decimal">decimal</option>
-                              <option value="bool">bool</option>
-                              <option value="DateTime">DateTime</option>
-                              {schemaJson.Enums.map((e: any) => (
-                                <option key={e.Name} value={e.Name}>{e.Name}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-4 mt-1">
-                          <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={prop.isKey}
-                              onChange={(e) => updateProperty(classNodeSelected.id, idx, { isKey: e.target.checked })}
-                              className="w-3.5 h-3.5 accent-sky-500"
-                            />
-                            Key
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={prop.isEnum}
-                              onChange={(e) => updateProperty(classNodeSelected.id, idx, { isEnum: e.target.checked })}
-                              className="w-3.5 h-3.5 accent-sky-500"
-                            />
-                            Enum
-                          </label>
-                        </div>
-
-                        {/* Traits list */}
-                        <div className="mt-1 border-t border-slate-800 pt-1.5">
-                          <span className="text-[9px] text-slate-500 font-mono block mb-1">TRAITS</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {['Required', 'Index', 'Unique', 'TextIndex', 'Encrypt', 'Mask', 'MaskEmail'].map(attr => (
-                              <button
-                                key={attr}
-                                onClick={() => {
-                                  const newAttrs = prop.attributes.includes(attr)
-                                    ? prop.attributes.filter(a => a !== attr)
-                                    : [...prop.attributes, attr];
-                                  updateProperty(classNodeSelected.id, idx, { attributes: newAttrs });
-                                }}
-                                className={`px-1.5 py-0.5 rounded text-[10px] transition-all ${
-                                  prop.attributes.includes(attr)
-                                    ? 'bg-sky-500/20 text-sky-400 font-medium'
-                                    : 'bg-slate-850 hover:bg-slate-800 text-slate-500'
-                                }`}
-                              >
-                                {attr}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Composite Indexes */}
-              <div className="flex flex-col gap-3 border-t border-slate-800 pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-slate-400">Composite Indexes</h3>
-                  <button 
-                    onClick={() => addIndex(classNodeSelected.id)}
-                    className="flex items-center gap-1 text-[10px] text-sky-400 hover:text-sky-300 font-bold"
-                  >
-                    <Plus className="w-3 h-3" /> ADD
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {classNodeSelected.data.entity.indexes.map((idxObj: Index, idxIdx: number) => (
-                    <div key={idxIdx} className="bg-slate-950/60 border border-slate-800 p-2.5 rounded relative group flex flex-col gap-1.5">
-                      <button
-                        onClick={() => deleteIndex(classNodeSelected.id, idxIdx)}
-                        className="absolute top-2 right-2 p-1 hover:bg-red-500/20 text-slate-600 hover:text-red-400 rounded transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-
-                      <div>
-                        <label className="text-[9px] text-slate-500 font-mono block mb-0.5">FIELDS (comma-separated)</label>
-                        <input
-                          type="text"
-                          value={idxObj.fields.join(', ')}
-                          onChange={(e) => updateIndex(classNodeSelected.id, idxIdx, e.target.value.split(',').map(s => s.trim()).filter(Boolean), idxObj.unique)}
-                          className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                          placeholder="e.g. Field1, Field2"
-                        />
-                      </div>
-
-                      <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer mt-0.5">
-                        <input
-                          type="checkbox"
-                          checked={idxObj.unique}
-                          onChange={(e) => updateIndex(classNodeSelected.id, idxIdx, idxObj.fields, e.target.checked)}
-                          className="w-3.5 h-3.5 accent-sky-500"
-                        />
-                        Unique Constraint
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Minimal API Settings */}
-              <div className="flex flex-col gap-3 border-t border-slate-800 pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-slate-400">Minimal API Settings</h3>
-                </div>
-
-                <div className="flex flex-col gap-3 bg-slate-950/45 border border-slate-800 p-3 rounded">
-                  {["GET", "GET_BY_ID", "POST", "PUT", "DELETE"].map((verb) => {
-                    const enabledMethods = classNodeSelected.data.entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'];
-                    const isEnabled = enabledMethods.includes(verb);
-                    const rolesObj = classNodeSelected.data.entity.apiRoles || {};
-                    const rolesStr = (rolesObj[verb] || []).join(', ');
-                    
-                    const cacheObj = classNodeSelected.data.entity.apiCaching || {};
-                    const cacheConfig = cacheObj[verb] || { enabled: false, ttlSeconds: 60 };
-
-                    return (
-                      <div key={verb} className="flex flex-col gap-2 border-b border-slate-800/60 pb-2 last:border-0 last:pb-0">
-                        <label className="flex items-center justify-between text-xs text-white font-semibold cursor-pointer">
-                          <span>{verb === 'GET_BY_ID' ? 'GET By ID (Single)' : verb === 'GET' ? 'GET (Search/List)' : verb}</span>
-                          <input
-                            type="checkbox"
-                            checked={isEnabled}
-                            onChange={(e) => {
-                              const nextMethods = e.target.checked 
-                                ? [...enabledMethods, verb]
-                                : enabledMethods.filter(m => m !== verb);
-                              updateClassNode(classNodeSelected.id, { apiEnabledMethods: nextMethods });
-                            }}
-                            className="w-4 h-4 accent-sky-500 cursor-pointer"
-                          />
-                        </label>
-
-                        {isEnabled && (
-                          <div className="pl-3 flex flex-col gap-1.5 border-l border-slate-800 mt-1">
-                            <div>
-                              <span className="text-[9px] text-slate-500 font-mono block">ROLES (COMMA SEPARATED)</span>
-                              <input
-                                type="text"
-                                value={rolesStr}
-                                onChange={(e) => {
-                                  const nextRoles = { ...rolesObj };
-                                  nextRoles[verb] = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
-                                  updateClassNode(classNodeSelected.id, { apiRoles: nextRoles });
-                                }}
-                                className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none focus:border-sky-500"
-                                placeholder="e.g. Admin, User"
-                              />
-                            </div>
-
-                            {(verb === 'GET' || verb === 'GET_BY_ID') && (
-                              <div className="flex flex-col gap-1.5 mt-1">
-                                <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={cacheConfig.enabled}
-                                    onChange={(e) => {
-                                      const nextCaching = { ...cacheObj };
-                                      nextCaching[verb] = { ...cacheConfig, enabled: e.target.checked };
-                                      updateClassNode(classNodeSelected.id, { apiCaching: nextCaching });
-                                    }}
-                                    className="w-3.5 h-3.5 accent-sky-500"
-                                  />
-                                  Enable Query Cache
-                                </label>
-                                {cacheConfig.enabled && (
-                                  <div>
-                                    <span className="text-[9px] text-slate-500 font-mono block">CACHE TTL (SECONDS)</span>
-                                    <input
-                                      type="number"
-                                      value={cacheConfig.ttlSeconds}
-                                      onChange={(e) => {
-                                        const nextCaching = { ...cacheObj };
-                                        nextCaching[verb] = { ...cacheConfig, ttlSeconds: parseInt(e.target.value) || 60 };
-                                        updateClassNode(classNodeSelected.id, { apiCaching: nextCaching });
-                                      }}
-                                      className="w-24 px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-white focus:outline-none"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : enumNodeSelected ? (
-            // Enum Node properties
-            <div className="flex flex-col gap-4">
+        {activeView === 'schema' ? (
+          <>
+            {/* Left Panel - Toolbox */}
+            {!isFullScreen && (
+              <div className="w-64 bg-white/80 dark:bg-slate-900/50 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-6 z-10 backdrop-blur-md print-hide transition-colors duration-200">
               <div>
-                <label className="text-[10px] text-slate-500 font-mono block mb-1">ENUM NAME</label>
-                <input
-                  type="text"
-                  value={enumNodeSelected.data.enum.name}
-                  onChange={(e) => updateEnumNode(enumNodeSelected.id, { name: e.target.value, values: enumNodeSelected.data.enum.values })}
-                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-sm text-white focus:outline-none focus:border-sky-500 font-semibold"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-slate-400">Values</h3>
-                  <button 
-                    onClick={() => {
-                      const values = [...enumNodeSelected.data.enum.values, ''];
-                      updateEnumNode(enumNodeSelected.id, { name: enumNodeSelected.data.enum.name, values });
-                    }}
-                    className="flex items-center gap-1 text-[10px] text-sky-400 hover:text-sky-300 font-bold"
-                  >
-                    <Plus className="w-3 h-3" /> ADD
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {enumNodeSelected.data.enum.values.map((val: string, idx: number) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        value={val}
-                        onChange={(e) => {
-                          const values = [...enumNodeSelected.data.enum.values];
-                          values[idx] = e.target.value;
-                          updateEnumNode(enumNodeSelected.id, { name: enumNodeSelected.data.enum.name, values });
-                        }}
-                        className="flex-1 px-2.5 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-white focus:outline-none focus:border-sky-500 font-mono"
-                      />
-                      <button 
-                        onClick={() => {
-                          const values = [...enumNodeSelected.data.enum.values];
-                          values.splice(idx, 1);
-                          updateEnumNode(enumNodeSelected.id, { name: enumNodeSelected.data.enum.name, values });
-                        }}
-                        className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Editor Tools</h2>
+                <div className="flex flex-col gap-1.5">
+                  {(['Select', 'Association', 'Composition', 'Inheritance'] as const).map(tool => (
+                    <button
+                      key={tool}
+                      onClick={() => setActiveTool(tool)}
+                      className={`px-3 py-2 rounded text-left text-xs transition-all flex items-center justify-between ${
+                        activeTool === tool 
+                          ? 'bg-sky-500/10 border border-sky-500/30 text-sky-500 dark:text-sky-400 font-semibold' 
+                          : 'bg-slate-100 dark:bg-slate-800/20 border border-slate-200/50 dark:border-transparent hover:bg-slate-200 dark:hover:bg-slate-800/40 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span>{tool === 'Select' ? 'Pointer/Select' : `${tool} Link`}</span>
+                      {activeTool === tool && <Check className="w-3.5 h-3.5 text-sky-500 dark:text-sky-400" />}
+                    </button>
                   ))}
                 </div>
               </div>
+
+              <div>
+                <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Add Elements</h2>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleAddClass}
+                    className="flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded transition-all group"
+                  >
+                    <Plus className="w-5 h-5 text-sky-500 dark:text-sky-400 mb-1.5 group-hover:scale-110 transition-transform" />
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Class Node</span>
+                  </button>
+                  
+                  <button
+                    onClick={handleAddEnum}
+                    className="flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded transition-all group"
+                  >
+                    <Plus className="w-5 h-5 text-purple-500 dark:text-purple-400 mb-1.5 group-hover:scale-110 transition-transform" />
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Enum Node</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-auto border-t border-slate-200 dark:border-slate-800 pt-4 flex flex-col gap-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4 text-sky-500 dark:text-sky-400 animate-pulse" />
+                  <span>AI Designer Assistant</span>
+                </div>
+                
+                <textarea
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="Ask AI to add Customer class, link composition, etc..."
+                  className="w-full px-2.5 py-2 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-slate-800 dark:text-slate-300 resize-none h-20 placeholder:text-slate-400 dark:placeholder:text-slate-650 font-sans transition-colors duration-200"
+                />
+
+                {aiError && (
+                  <div className="text-[10px] text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 p-2 rounded">
+                    {aiError}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAiSubmit}
+                  disabled={isAiLoading || !aiPrompt.trim()}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-500 text-white rounded text-xs font-semibold transition-all shadow-md shadow-sky-600/10 cursor-pointer"
+                >
+                  {isAiLoading ? (
+                    <span className="flex items-center gap-1">
+                      <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Thinking...
+                    </span>
+                  ) : (
+                    <>Submit Prompt</>
+                  )}
+                </button>
+              </div>
             </div>
-          ) : null}
-        </div>
+            )}
+
+            {/* Center Canvas */}
+            <div className="flex-1 relative h-full react-flow-wrapper">
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={handleNodeClick}
+                onClick={handleCanvasClick}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}
+                connectionLineType={ConnectionLineType.SmoothStep}
+                fitView
+                className="bg-slate-50 dark:bg-slate-950 transition-colors duration-200"
+              >
+                <Background color={theme === 'dark' ? '#1e293b' : '#cbd5e1'} />
+                <Controls className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white rounded-none" />
+                <MiniMap 
+                  nodeColor={(node) => {
+                    if (node.type === 'classNode') return '#38bdf8';
+                    if (node.type === 'enumNode') return '#c084fc';
+                    return '#64748b';
+                  }}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                  pannable={true}
+                  zoomable={true}
+                />
+                
+                {/* Custom SVG marker definitions for sharp orthogonal arrowheads */}
+                <svg style={{ position: 'absolute', width: 0, height: 0 }}>
+                  <defs>
+                    <marker 
+                      id="uml-inheritance" 
+                      viewBox="0 0 10 10" 
+                      refX="8" 
+                      refY="5" 
+                      markerWidth="8" 
+                      markerHeight="8" 
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 0 L 8 5 L 0 10 z" fill="#0f172a" stroke="#475569" strokeWidth="1.5" />
+                    </marker>
+                    
+                    <marker 
+                      id="uml-composition" 
+                      viewBox="0 0 12 12" 
+                      refX="10" 
+                      refY="6" 
+                      markerWidth="10" 
+                      markerHeight="10" 
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 6 L 5 1 L 10 6 L 5 11 z" fill="#475569" stroke="#475569" strokeWidth="1.5" />
+                    </marker>
+                    
+                    <marker 
+                      id="uml-association" 
+                      viewBox="0 0 10 10" 
+                      refX="8" 
+                      refY="5" 
+                      markerWidth="7" 
+                      markerHeight="7" 
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 1 L 8 5 L 0 9" fill="none" stroke="#475569" strokeWidth="1.5" />
+                    </marker>
+                  </defs>
+                </svg>
+              </ReactFlow>
+
+              {/* Floating Canvas Action Overlays */}
+              <div className="absolute top-4 right-4 z-20 flex gap-2 print-hide">
+                <button
+                  onClick={handleExportPdf}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer backdrop-blur shadow-md dark:shadow-lg select-none"
+                  title="Export class diagram to a printable PDF / Image"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                  <span>Export Diagram</span>
+                </button>
+
+                <button
+                  onClick={() => setIsFullScreen(!isFullScreen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer backdrop-blur shadow-md dark:shadow-lg select-none"
+                  title="Toggle full screen visual designer focus"
+                >
+                  {isFullScreen ? 'Exit Full Screen' : 'Full Screen'}
+                </button>
+              </div>
+            </div>
+
+            {/* Right Panel - Property Inspector */}
+            {!isFullScreen && <InspectorPanel />}
+          </>
+        ) : (
+          <>
+            {/* Left Panel - API Overview */}
+            <div className="w-64 bg-white/80 dark:bg-slate-900/50 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-6 z-10 backdrop-blur-md transition-colors duration-200">
+              <div>
+                <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-3">API Overview</h2>
+                <div className="flex flex-col gap-3 bg-slate-50 dark:bg-slate-950/40 p-4 border border-slate-200 dark:border-slate-800 rounded transition-colors duration-200">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-500 dark:text-slate-400">Total Routes:</span>
+                    <span className="font-mono font-bold text-sky-600 dark:text-sky-400">{apiMetrics.totalRoutes}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-500 dark:text-slate-400">Custom Routes:</span>
+                    <span className="font-mono font-bold text-purple-600 dark:text-purple-400">{apiMetrics.customRoutes}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs border-t border-slate-200 dark:border-slate-800 pt-2 mt-1">
+                    <span className="text-slate-500 dark:text-slate-400">Secured Methods:</span>
+                    <span className="font-mono font-bold text-amber-600 dark:text-amber-400">{apiMetrics.securedMethods}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Cached Routes:</span>
+                    <span className="font-mono font-bold text-emerald-400">{apiMetrics.cachedRoutes}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-auto border-t border-slate-200 dark:border-slate-800 pt-4 flex flex-col gap-3 transition-colors duration-200">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4 text-sky-500 dark:text-sky-400 animate-pulse" />
+                  <span>AI API Assistant</span>
+                </div>
+                
+                <textarea
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="Ask AI to configure cache, add custom endpoints..."
+                  className="w-full px-2.5 py-2 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:outline-none focus:border-sky-500 text-slate-800 dark:text-slate-300 resize-none h-20 placeholder:text-slate-400 dark:placeholder:text-slate-600 font-sans transition-colors duration-200"
+                />
+
+                {aiError && (
+                  <div className="text-[10px] text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 p-2 rounded">
+                    {aiError}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAiSubmit}
+                  disabled={isAiLoading || !aiPrompt.trim()}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-500 text-white rounded text-xs font-semibold transition-all shadow-md shadow-sky-600/10 cursor-pointer"
+                >
+                  {isAiLoading ? 'Thinking...' : 'Submit Prompt'}
+                </button>
+              </div>
+            </div>
+
+            {/* API Designer Panel */}
+            <ApiDesigner />
+          </>
+        )}
       </div>
 
       {/* Code / JSON Preview Modal */}
@@ -1083,16 +1056,34 @@ export const StudioWorkspace: React.FC = () => {
                     <button
                       onClick={handleSaveToWorkspace}
                       disabled={isSaving}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold transition-all shadow-md disabled:bg-slate-850 disabled:text-slate-500 cursor-pointer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold transition-all shadow-md disabled:bg-slate-800 disabled:text-slate-500 cursor-pointer"
                     >
-                      {isSaving ? 'Saving...' : 'Save to Workspace'}
+                      {isSaving ? 'Saving...' : (
+                        <>
+                          <Plug className="w-3.5 h-3.5" /> Publish API
+                        </>
+                      )}
                     </button>
-                    <button
-                      onClick={downloadPocos}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-350 rounded text-xs cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Download All
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={downloadPocos}
+                        className="flex items-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-350 rounded text-xs cursor-pointer"
+                      >
+                        <Code className="w-3.5 h-3.5" /> Code
+                      </button>
+                      <button
+                        onClick={downloadManifest}
+                        className="flex items-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-350 rounded text-xs cursor-pointer"
+                      >
+                        <Database className="w-3.5 h-3.5" /> Manifest
+                      </button>
+                      <button
+                        onClick={downloadAllWithManifest}
+                        className="flex items-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-xs cursor-pointer font-semibold"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Download All
+                      </button>
+                    </div>
                     {saveMessage && (
                       <div className="absolute right-0 top-full mt-2 bg-slate-900 border border-slate-800 p-2.5 rounded text-[10px] text-sky-400 shadow-2xl max-w-xs text-right whitespace-pre-wrap font-mono">
                         {saveMessage}

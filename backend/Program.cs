@@ -18,7 +18,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins("http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173")
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
@@ -80,12 +80,16 @@ Return ONLY the complete updated JSON schema. Follow these rules:
 
         var client = httpClientFactory.CreateClient();
         
-        var ollamaHost = Environment.GetEnvironmentVariable("OLLAMA_HOST") ?? "http://edgexpert-c1ad.local:11434";
+        var ollamaHost = !string.IsNullOrWhiteSpace(request.OllamaHost)
+            ? request.OllamaHost.Trim()
+            : Environment.GetEnvironmentVariable("OLLAMA_HOST") ?? "http://edgexpert-c1ad.local:11434";
         var ollamaUrl = $"{ollamaHost}/api/generate";
 
         var ollamaRequest = new
         {
-            model = "qwen3-coder:30b",
+            model = !string.IsNullOrWhiteSpace(request.OllamaModel)
+                ? request.OllamaModel.Trim()
+                : "qwen3-coder:30b",
             prompt = systemPrompt,
             stream = false,
             format = "json"
@@ -120,6 +124,41 @@ Return ONLY the complete updated JSON schema. Follow these rules:
     }
 });
 
+app.MapGet("/api/ai/models", async (string host, IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return Results.BadRequest(new { error = "Host is required." });
+        }
+
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(5); // Fast timeout for validation
+
+        var ollamaUrl = $"{host.TrimEnd('/')}/api/tags";
+        var response = await client.GetAsync(ollamaUrl);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return Results.Problem($"Failed to query Ollama: {response.ReasonPhrase}");
+        }
+
+        var tagsResponse = await response.Content.ReadFromJsonAsync<OllamaTagsResponse>();
+        if (tagsResponse == null || tagsResponse.Models == null)
+        {
+            return Results.Ok(new List<string>());
+        }
+
+        var modelNames = tagsResponse.Models.Select(m => m.Name).ToList();
+        return Results.Ok(modelNames);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Could not connect to Ollama host: {ex.Message}");
+    }
+});
+
 app.MapPost("/api/save-pocos", (SaveRequest request) =>
 {
     try
@@ -129,18 +168,23 @@ app.MapPost("/api/save-pocos", (SaveRequest request) =>
             return Results.BadRequest(new { error = "Invalid request. OutputPath is required." });
         }
 
-        // Get full path (resolves relative paths nicely)
-        var targetPath = Path.GetFullPath(request.OutputPath);
+        // Validate the output path is within an allowed directory to prevent path traversal
+        var resolvedPath = Path.GetFullPath(request.OutputPath);
+        var allowedRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", ".."));
+        if (!resolvedPath.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new { error = $"Output path must be within the workspace: {allowedRoot}" });
+        }
 
-        Directory.CreateDirectory(targetPath);
+        Directory.CreateDirectory(resolvedPath);
 
         foreach (var file in request.Files)
         {
-            var filePath = Path.Combine(targetPath, file.Key);
+            var filePath = Path.Combine(resolvedPath, file.Key);
             File.WriteAllText(filePath, file.Value);
         }
 
-        return Results.Ok(new { message = $"Successfully saved {request.Files.Count} classes to: {targetPath}" });
+        return Results.Ok(new { message = $"Successfully saved {request.Files.Count} classes to: {resolvedPath}" });
     }
     catch (Exception ex)
     {
@@ -157,7 +201,14 @@ app.MapPost("/api/save-manifest", (SaveManifestRequest request) =>
             return Results.BadRequest(new { error = "Invalid request. OutputPath is required." });
         }
 
+        // Validate the output path is within an allowed directory to prevent path traversal
         var targetPath = Path.GetFullPath(request.OutputPath);
+        var allowedRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", ".."));
+        if (!targetPath.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new { error = $"Output path must be within the workspace: {allowedRoot}" });
+        }
+
         var directory = Path.GetDirectoryName(targetPath);
         if (!string.IsNullOrEmpty(directory))
         {
@@ -181,6 +232,8 @@ public record AiRequest
 {
     public string Prompt { get; init; } = string.Empty;
     public SchemaModel? CurrentSchema { get; init; }
+    public string? OllamaHost { get; init; }
+    public string? OllamaModel { get; init; }
 }
 
 public record SaveRequest
@@ -199,4 +252,16 @@ public record OllamaResponse
 {
     [JsonPropertyName("response")]
     public string Response { get; init; } = string.Empty;
+}
+
+public record OllamaTagsResponse
+{
+    [JsonPropertyName("models")]
+    public List<OllamaTagModel>? Models { get; init; }
+}
+
+public record OllamaTagModel
+{
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
 }
