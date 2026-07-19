@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '../store';
 import type { Property, Index, ClassNode, EnumNode } from '../types';
 import { Plus, Trash2, Edit, Globe, Clock, Zap } from 'lucide-react';
@@ -750,7 +751,7 @@ export const InspectorPanel: React.FC = () => {
           const prop = classNodeSelected.data.entity.properties[editingPropIdx];
           if (!prop) return null;
           
-          return (
+          return createPortal(
             <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded max-w-md w-full shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
                 {/* Header */}
@@ -935,12 +936,13 @@ export const InspectorPanel: React.FC = () => {
                   </button>
                 </div>
               </div>
-            </div>
+            </div>,
+            document.body
           );
         })()
       )}
 
-      {confirmConfig.isOpen && (
+      {confirmConfig.isOpen && createPortal(
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-5 max-w-sm w-full shadow-2xl flex flex-col gap-4 animate-in fade-in zoom-in duration-200">
             <div className="flex flex-col gap-1">
@@ -962,7 +964,8 @@ export const InspectorPanel: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
