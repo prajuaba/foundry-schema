@@ -220,7 +220,15 @@ export const useStore = create<StoreState>((rawSet, get) => {
   addCustomEndpoint: () => set((state) => ({
     customEndpoints: [
       ...state.customEndpoints,
-      { route: '/api/v1/custom-route', method: 'POST', requestType: 'CustomCommand', roles: ['Admin'] }
+      { 
+        route: '/api/v1/custom-route', 
+        method: 'POST', 
+        requestType: 'CustomCommand', 
+        roles: ['Admin'], 
+        operationType: 'Custom', 
+        assignments: [], 
+        businessRules: [] 
+      }
     ]
   })),
 
@@ -946,6 +954,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
           ApiEnabledMethods: entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'],
           ApiRoles: entity.apiRoles || {},
           ApiCaching: entity.apiCaching || {},
+          ApiBusinessRules: entity.apiBusinessRules || {},
           RealTime: entity.realTime !== false,
           RealTimeRoles: entity.realTimeRoles || [],
         });
@@ -984,7 +993,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
         FilterField: e.filterField,
         FilterOperator: e.filterOperator,
         FilterSourceValue: e.filterSourceValue,
-        Assignments: e.assignments
+        Assignments: e.assignments,
+        BusinessRules: e.businessRules || []
       })),
     };
   },
@@ -1005,6 +1015,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
           Indexes: entity.indexes && entity.indexes.length > 0
             ? entity.indexes.map((idx: Index) => ({ Fields: idx.fields, Unique: idx.unique }))
             : undefined,
+          ApiBusinessRules: entity.apiBusinessRules || {},
           RealTime: entity.realTime !== false,
           RealTimeRoles: entity.realTimeRoles || [],
         });
@@ -1080,6 +1091,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
           Methods: enabledMethods,
           Roles: roles,
           Caching: Object.keys(caching).length > 0 ? caching : undefined,
+          BusinessRules: entity.apiBusinessRules || {},
         };
 
         // Include relationship data so the API engine knows about navigation endpoints
@@ -1121,7 +1133,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
         Route: e.route,
         Method: e.method,
         RequestType: e.requestType,
-        Roles: e.roles
+        Roles: e.roles,
+        BusinessRules: e.businessRules || []
       }))
     };
   },
@@ -1190,6 +1203,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
         'GET': { enabled: false, ttlSeconds: 60 },
         'GET_BY_ID': { enabled: false, ttlSeconds: 120 }
       };
+      const apiBusinessRules = entity.ApiBusinessRules || entity.apiBusinessRules || {};
       const realTime = entity.RealTime !== undefined ? entity.RealTime : (entity.realTime !== undefined ? entity.realTime : true);
       const realTimeRoles = entity.RealTimeRoles || entity.realTimeRoles || [];
  
@@ -1208,6 +1222,7 @@ export const useStore = create<StoreState>((rawSet, get) => {
             apiEnabledMethods,
             apiRoles,
             apiCaching,
+            apiBusinessRules,
             realTime,
             realTimeRoles
           }
@@ -1303,7 +1318,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
       filterField: e.FilterField || e.filterField,
       filterOperator: e.FilterOperator || e.filterOperator,
       filterSourceValue: e.FilterSourceValue || e.filterSourceValue,
-      assignments: e.Assignments || e.assignments || []
+      assignments: e.Assignments || e.assignments || [],
+      businessRules: e.BusinessRules || e.businessRules || []
     }));
 
     const dtosImported = (schema.Dtos || schema.dtos || []).map((d: any) => ({

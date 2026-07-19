@@ -298,15 +298,27 @@ export const InspectorPanel: React.FC = () => {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-[9px] text-slate-500 dark:text-slate-500 font-mono block">ROLES (COMMA SEPARATED)</label>
-                      <input
-                        type="text"
-                        value={ep.roles.join(', ')}
-                        onChange={(e) => updateCustomEndpoint(idx, { roles: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-white focus:outline-none"
-                        placeholder="User, Admin"
-                      />
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="text-[9px] text-slate-500 dark:text-slate-500 font-mono block">ROLES (COMMA SEPARATED)</label>
+                        <input
+                          type="text"
+                          value={ep.roles.join(', ')}
+                          onChange={(e) => updateCustomEndpoint(idx, { roles: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-white focus:outline-none"
+                          placeholder="User, Admin"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[9px] text-slate-500 dark:text-slate-500 font-mono block">BUSINESS RULES (COMMA SEPARATED)</label>
+                        <input
+                          type="text"
+                          value={(ep.businessRules || []).join(', ')}
+                          onChange={(e) => updateCustomEndpoint(idx, { businessRules: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-white focus:outline-none"
+                          placeholder="e.g. LimitRule"
+                        />
+                      </div>
                     </div>
                   </div>
                 ))
@@ -435,6 +447,30 @@ export const InspectorPanel: React.FC = () => {
                       }}
                       className="flex-1 px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-[9px] text-slate-800 dark:text-white font-mono focus:outline-none focus:border-sky-500"
                       placeholder="Admin,User"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Business Rules per method */}
+            <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <label className="text-[8px] text-slate-500 dark:text-slate-500 font-mono uppercase">Business Rules</label>
+              {(classNodeSelected.data.entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE']).map((method) => {
+                const rules = classNodeSelected.data.entity.apiBusinessRules?.[method] || [];
+                return (
+                  <div key={method} className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-sky-400 font-mono font-bold w-24">{method}</span>
+                    <input
+                      type="text"
+                      value={rules.join(',')}
+                      onChange={(e) => {
+                        const newRules = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
+                        const apiBusinessRules = { ...classNodeSelected.data.entity.apiBusinessRules, [method]: newRules };
+                        updateClassNode(classNodeSelected.id, { apiBusinessRules });
+                      }}
+                      className="flex-1 px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-[9px] text-slate-800 dark:text-white font-mono focus:outline-none focus:border-sky-500"
+                      placeholder="e.g. CreditLimitRule"
                     />
                   </div>
                 );

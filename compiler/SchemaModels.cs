@@ -21,6 +21,7 @@ namespace Foundry.Schema.Compiler
         public int ArchiveThresholdYears { get; init; } = 2;
         public bool RealTime { get; init; } = true;
         public List<string> RealTimeRoles { get; init; } = new();
+        public Dictionary<string, List<string>> ApiBusinessRules { get; init; } = new();
         public List<Property> Properties { get; init; } = new();
         public List<Index> Indexes { get; init; } = new();
     }
@@ -74,6 +75,7 @@ namespace Foundry.Schema.Compiler
         public string? FilterOperator { get; init; }
         public string? FilterSourceValue { get; init; }
         public List<Assignment> Assignments { get; init; } = new();
+        public List<string> BusinessRules { get; init; } = new();
     }
 
     public record Assignment

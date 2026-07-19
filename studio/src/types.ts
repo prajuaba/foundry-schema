@@ -30,6 +30,7 @@ export interface Entity {
   apiEnabledMethods?: string[];
   apiRoles?: Record<string, string[]>;
   apiCaching?: Record<string, CachingConfig>;
+  apiBusinessRules?: Record<string, string[]>;
 
   // Real-Time Settings
   realTime?: boolean;
@@ -43,7 +44,7 @@ export interface Enum {
 
 export interface Assignment {
   entityProperty: string;
-  sourceType: 'RequestProperty' | 'Constant';
+  sourceType: string;
   sourceValue: string;
 }
 
@@ -54,12 +55,13 @@ export interface CustomEndpoint {
   roles: string[];
   
   // Visual Data Operation Config
-  operationType?: 'Custom' | 'Query' | 'Update' | 'Insert';
+  operationType: string;
   targetEntity?: string;
   filterField?: string;
-  filterOperator?: 'Equals' | 'Contains' | 'GreaterThan';
+  filterOperator?: string;
   filterSourceValue?: string;
-  assignments?: Assignment[];
+  assignments: Assignment[];
+  businessRules?: string[];
 }
 
 export interface DtoProperty {

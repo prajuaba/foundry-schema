@@ -44,6 +44,35 @@ namespace Foundry.Schema.Compiler
 
                     var handlerCode = GenerateHandler(ep, schema.Namespace);
                     result[$"Handlers/{ep.RequestType}Handler"] = handlerCode;
+
+                    if (ep.BusinessRules != null)
+                    {
+                        foreach (var rule in ep.BusinessRules)
+                        {
+                            if (string.IsNullOrWhiteSpace(rule)) continue;
+                            result[$"Rules/{rule}"] = GenerateCustomEndpointRuleStub(rule, ep.RequestType, schema.Namespace);
+                        }
+                    }
+                }
+            }
+
+            // Generate Entity-level CRUD Rules stubs
+            if (schema.Entities != null)
+            {
+                foreach (var entity in schema.Entities)
+                {
+                    if (entity.ApiBusinessRules == null) continue;
+                    foreach (var pair in entity.ApiBusinessRules)
+                    {
+                        var method = pair.Key;
+                        var rules = pair.Value;
+                        if (rules == null) continue;
+                        foreach (var rule in rules)
+                        {
+                            if (string.IsNullOrWhiteSpace(rule)) continue;
+                            result[$"Rules/{rule}"] = GenerateEntityRuleStub(rule, method, entity.Name, schema.Namespace);
+                        }
+                    }
                 }
             }
 
@@ -362,6 +391,61 @@ public class {handlerName} : IRequestHandler<{ep.RequestType}, {responseType}>
 {body}
     }}
 }}";
+        }
+
+        private static string GenerateCustomEndpointRuleStub(string ruleName, string requestType, string ns)
+        {
+            return $@"using System.Threading;
+using System.Threading.Tasks;
+using Foundry.Rules;
+
+namespace {ns}.Rules;
+
+/// <summary>
+/// Custom business rule validator for {requestType}.
+/// </summary>
+public class {ruleName} : IBusinessRule<{ns}.{requestType}>
+{{
+    public Task<RuleResult> ValidateAsync({ns}.{requestType} request, CancellationToken ct)
+    {{
+        // TODO: Implement custom business policy validation logic
+        return Task.FromResult(RuleResult.Success());
+    }}
+}}
+";
+        }
+
+        private static string GenerateEntityRuleStub(string ruleName, string method, string entityName, string ns)
+        {
+            var requestType = method.ToUpperInvariant() switch
+            {
+                "POST" => $"InsertCommand<{ns}.{entityName}>",
+                "PUT" => $"UpdateCommand<{ns}.{entityName}>",
+                "DELETE" => $"DeleteCommand<{ns}.{entityName}>",
+                "GET_BY_ID" => $"GetByIdQuery<{ns}.{entityName}>",
+                "GET" => $"FindManyQuery<{ns}.{entityName}>",
+                _ => "object"
+            };
+
+            return $@"using System.Threading;
+using System.Threading.Tasks;
+using Foundry.Rules;
+using Foundry.Api.MediatR;
+
+namespace {ns}.Rules;
+
+/// <summary>
+/// Entity CRUD business rule validator for {entityName} on {method}.
+/// </summary>
+public class {ruleName} : IBusinessRule<{requestType}>
+{{
+    public Task<RuleResult> ValidateAsync({requestType} request, CancellationToken ct)
+    {{
+        // TODO: Implement custom business policy validation logic
+        return Task.FromResult(RuleResult.Success());
+    }}
+}}
+";
         }
     }
 }
