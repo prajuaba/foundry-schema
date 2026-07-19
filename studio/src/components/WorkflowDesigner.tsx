@@ -127,30 +127,44 @@ export const WorkflowDesigner: React.FC = () => {
         id: s.name,
         type: 'stateNode',
         position: { x: s.x ?? (150 + idx * 240), y: s.y ?? 100 },
+        selected: selectedStateIndex === idx,
         data: { label: s.name, isInitial: s.isInitial, isFinal: s.isFinal, allowedRoles: s.allowedRoles },
       })),
       ...(selectedWorkflow.choiceNodes || []).map((c, idx) => ({
         id: c.id,
         type: 'choiceNode',
         position: { x: c.x ?? (150 + idx * 240), y: c.y ?? 280 },
+        selected: selectedChoiceNodeIndex === idx,
         data: { label: c.name, branchesCount: (c.branches || []).length, defaultState: c.defaultState },
       }))
     ];
 
-    const newEdges: Edge[] = selectedWorkflow.transitions.map(t => ({
-      id: t.id,
-      source: t.fromState,
-      target: t.toState,
-      label: t.name || t.trigger,
-      type: 'smoothstep',
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#38bdf8' },
-      style: { stroke: '#38bdf8', strokeWidth: 1.5 },
-      labelStyle: { fill: '#94a3b8', fontSize: '9px', fontFamily: 'monospace' }
-    }));
+    const newEdges: Edge[] = selectedWorkflow.transitions.map((t, idx) => {
+      const isSelected = selectedTransitionIndex === idx;
+      return {
+        id: t.id,
+        source: t.fromState,
+        target: t.toState,
+        label: t.name || t.trigger,
+        type: 'smoothstep',
+        selected: isSelected,
+        markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? '#a855f7' : '#38bdf8' },
+        style: { stroke: isSelected ? '#a855f7' : '#38bdf8', strokeWidth: isSelected ? 3 : 1.5, cursor: 'pointer' },
+        labelStyle: { fill: isSelected ? '#a855f7' : '#94a3b8', fontSize: '9px', fontFamily: 'monospace', fontWeight: isSelected ? 'bold' : 'normal' }
+      };
+    });
 
     setFlowNodes(newNodes);
     setFlowEdges(newEdges);
-  }, [selectedWorkflowIndex, selectedWorkflow?.states, selectedWorkflow?.choiceNodes, selectedWorkflow?.transitions]);
+  }, [
+    selectedWorkflowIndex, 
+    selectedWorkflow?.states, 
+    selectedWorkflow?.choiceNodes, 
+    selectedWorkflow?.transitions,
+    selectedStateIndex,
+    selectedChoiceNodeIndex,
+    selectedTransitionIndex
+  ]);
 
   // Extract all entity names from class nodes on the canvas
   const availableEntities = useMemo(() => {
@@ -282,29 +296,34 @@ export const WorkflowDesigner: React.FC = () => {
     });
   };
 
-  // selection click handlers
-  const onSelectionChange = (params: { nodes: Node[]; edges: Edge[] }) => {
+  // Selection click handlers
+  const onNodeClick = (_event: any, node: Node) => {
     if (!selectedWorkflow) return;
-    if (params.nodes.length > 0) {
-      const node = params.nodes[0];
-      if (node.type === 'stateNode') {
-        const idx = selectedWorkflow.states.findIndex(s => s.name === node.id);
-        setSelectedStateIndex(idx);
-        setSelectedChoiceNodeIndex(-1);
-        setSelectedTransitionIndex(-1);
-      } else if (node.type === 'choiceNode') {
-        const idx = selectedWorkflow.choiceNodes.findIndex(c => c.id === node.id);
-        setSelectedChoiceNodeIndex(idx);
-        setSelectedStateIndex(-1);
-        setSelectedTransitionIndex(-1);
-      }
-    } else if (params.edges.length > 0) {
-      const edge = params.edges[0];
-      const idx = selectedWorkflow.transitions.findIndex(t => t.id === edge.id);
-      setSelectedTransitionIndex(idx);
-      setSelectedStateIndex(-1);
+    if (node.type === 'stateNode') {
+      const idx = selectedWorkflow.states.findIndex(s => s.name === node.id);
+      setSelectedStateIndex(idx);
       setSelectedChoiceNodeIndex(-1);
+      setSelectedTransitionIndex(-1);
+    } else if (node.type === 'choiceNode') {
+      const idx = selectedWorkflow.choiceNodes.findIndex(c => c.id === node.id);
+      setSelectedChoiceNodeIndex(idx);
+      setSelectedStateIndex(-1);
+      setSelectedTransitionIndex(-1);
     }
+  };
+
+  const onEdgeClick = (_event: any, edge: Edge) => {
+    if (!selectedWorkflow) return;
+    const idx = selectedWorkflow.transitions.findIndex(t => t.id === edge.id);
+    setSelectedTransitionIndex(idx);
+    setSelectedStateIndex(-1);
+    setSelectedChoiceNodeIndex(-1);
+  };
+
+  const onPaneClick = () => {
+    setSelectedStateIndex(-1);
+    setSelectedChoiceNodeIndex(-1);
+    setSelectedTransitionIndex(-1);
   };
 
   return (
@@ -463,7 +482,9 @@ export const WorkflowDesigner: React.FC = () => {
                 nodeTypes={nodeTypes}
                 onConnect={onConnect}
                 onNodeDragStop={onNodeDragStop}
-                onSelectionChange={onSelectionChange}
+                onNodeClick={onNodeClick}
+                onEdgeClick={onEdgeClick}
+                onPaneClick={onPaneClick}
                 fitView
                 className="bg-slate-950/20"
               >
