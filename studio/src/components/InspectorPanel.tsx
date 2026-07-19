@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import type { Property, Index, ClassNode, EnumNode } from '../types';
-import { Plus, Trash2, Edit, Globe, Clock } from 'lucide-react';
+import { Plus, Trash2, Edit, Globe, Clock, Zap } from 'lucide-react';
 
 export const InspectorPanel: React.FC = () => {
   const {
@@ -347,7 +347,39 @@ export const InspectorPanel: React.FC = () => {
                 className="w-4 h-4 rounded text-sky-500 border-slate-200 dark:border-slate-800 focus:ring-sky-500 bg-white dark:bg-slate-900 cursor-pointer"
               />
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-600 dark:text-slate-350">Real-Time Sync</span>
+              <input 
+                type="checkbox"
+                checked={classNodeSelected.data.entity.realTime !== false}
+                onChange={(e) => updateClassNode(classNodeSelected.id, { realTime: e.target.checked })}
+                className="w-4 h-4 rounded text-sky-500 border-slate-200 dark:border-slate-800 focus:ring-sky-500 bg-white dark:bg-slate-900 cursor-pointer"
+              />
+            </div>
           </div>
+
+          {/* Real-Time Security Settings */}
+          {(classNodeSelected.data.entity.realTime !== false) && (
+            <div className="flex flex-col gap-2 p-3 bg-slate-100/40 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded">
+              <div className="flex items-center gap-2 mb-1">
+                <Zap className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-[9px] text-slate-600 dark:text-slate-350 font-semibold tracking-wide">REAL-TIME SECURITY</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-slate-500 font-mono">AUTHORIZED ROLES</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Admin, Manager (leave empty for anonymous)"
+                  value={(classNodeSelected.data.entity.realTimeRoles || []).join(', ')}
+                  onChange={(e) => {
+                    const roles = e.target.value.split(',').map(r => r.trim()).filter(Boolean);
+                    updateClassNode(classNodeSelected.id, { realTimeRoles: roles });
+                  }}
+                  className="w-full px-2.5 py-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+            </div>
+          )}
 
           {/* API Configuration */}
           <div className="flex flex-col gap-2 p-3 bg-slate-100/40 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded">

@@ -19,6 +19,8 @@ namespace Foundry.Schema.Compiler
         public bool Auditable { get; init; }
         public bool Partitioned { get; init; }
         public int ArchiveThresholdYears { get; init; } = 2;
+        public bool RealTime { get; init; } = true;
+        public List<string> RealTimeRoles { get; init; } = new();
         public List<Property> Properties { get; init; } = new();
         public List<Index> Indexes { get; init; } = new();
     }

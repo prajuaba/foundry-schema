@@ -30,6 +30,10 @@ export interface Entity {
   apiEnabledMethods?: string[];
   apiRoles?: Record<string, string[]>;
   apiCaching?: Record<string, CachingConfig>;
+
+  // Real-Time Settings
+  realTime?: boolean;
+  realTimeRoles?: string[];
 }
 
 export interface Enum {

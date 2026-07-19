@@ -946,6 +946,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
           ApiEnabledMethods: entity.apiEnabledMethods || ['GET', 'POST', 'GET_BY_ID', 'PUT', 'DELETE'],
           ApiRoles: entity.apiRoles || {},
           ApiCaching: entity.apiCaching || {},
+          RealTime: entity.realTime !== false,
+          RealTimeRoles: entity.realTimeRoles || [],
         });
       } else if (node.type === 'enumNode') {
         const enumNode = node as EnumNode;
@@ -1003,6 +1005,8 @@ export const useStore = create<StoreState>((rawSet, get) => {
           Indexes: entity.indexes && entity.indexes.length > 0
             ? entity.indexes.map((idx: Index) => ({ Fields: idx.fields, Unique: idx.unique }))
             : undefined,
+          RealTime: entity.realTime !== false,
+          RealTimeRoles: entity.realTimeRoles || [],
         });
       }
     });
@@ -1186,7 +1190,9 @@ export const useStore = create<StoreState>((rawSet, get) => {
         'GET': { enabled: false, ttlSeconds: 60 },
         'GET_BY_ID': { enabled: false, ttlSeconds: 120 }
       };
-
+      const realTime = entity.RealTime !== undefined ? entity.RealTime : (entity.realTime !== undefined ? entity.realTime : true);
+      const realTimeRoles = entity.RealTimeRoles || entity.realTimeRoles || [];
+ 
       newNodes.push({
         id: `class-${name}`,
         type: 'classNode',
@@ -1201,7 +1207,9 @@ export const useStore = create<StoreState>((rawSet, get) => {
             indexes,
             apiEnabledMethods,
             apiRoles,
-            apiCaching
+            apiCaching,
+            realTime,
+            realTimeRoles
           }
         }
       } as ClassNode);

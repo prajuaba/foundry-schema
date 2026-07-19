@@ -158,7 +158,19 @@ public enum {enumDef.Name}
                 ? $"[Partitioned({entity.ArchiveThresholdYears})]\n"
                 : "";
 
-            var extraImports = entity.Partitioned
+            var realTimeAttribute = "";
+            if (!entity.RealTime)
+            {
+                realTimeAttribute = "[RealTime(false)]\n";
+            }
+            else if (entity.RealTimeRoles != null && entity.RealTimeRoles.Count > 0)
+            {
+                var rolesList = string.Join(", ", entity.RealTimeRoles.Select(r => $"\"{r}\""));
+                realTimeAttribute = $"[RealTime(true, new[] {{ {rolesList} }})]\n";
+            }
+
+            var needAttributes = entity.Partitioned || !entity.RealTime || (entity.RealTimeRoles != null && entity.RealTimeRoles.Count > 0);
+            var extraImports = needAttributes
                 ? "\nusing Foundry.Core.Attributes;"
                 : "";
 
@@ -169,7 +181,7 @@ using Foundry.Core.Entities;{extraImports}
 
 namespace {@namespace};
 
-{partitionAttribute}public record {entity.Name} : {interfaceList}
+{partitionAttribute}{realTimeAttribute}public record {entity.Name} : {interfaceList}
 {{{propertyLines}}}";
         }
 
