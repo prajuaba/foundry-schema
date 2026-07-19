@@ -9,6 +9,64 @@ namespace Foundry.Schema.Compiler
         public List<Enum> Enums { get; init; } = new();
         public List<DtoModel> Dtos { get; init; } = new();
         public List<CustomEndpoint> CustomEndpoints { get; init; } = new();
+        public List<WorkflowModel> Workflows { get; init; } = new();
+    }
+
+    public record WorkflowModel
+    {
+        public string Id { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string Entity { get; init; } = string.Empty;
+        public string Version { get; init; } = string.Empty;
+        public string EffectiveDate { get; init; } = string.Empty;
+        public string ExpirationDate { get; init; } = string.Empty;
+        public bool IsActive { get; init; }
+        public List<WorkflowStateModel> States { get; init; } = new();
+        public List<WorkflowTransitionModel> Transitions { get; init; } = new();
+    }
+
+    public record WorkflowStateModel
+    {
+        public string Name { get; init; } = string.Empty;
+        public bool IsInitial { get; init; }
+        public bool IsFinal { get; init; }
+        public List<string> AllowedRoles { get; init; } = new();
+    }
+
+    public record WorkflowTransitionModel
+    {
+        public string Id { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string FromState { get; init; } = string.Empty;
+        public string ToState { get; init; } = string.Empty;
+        public string Trigger { get; init; } = string.Empty;
+        public bool UseCustomCommand { get; init; }
+        public List<string> RequiredRoles { get; init; } = new();
+        public List<WorkflowConditionModel> Conditions { get; init; } = new();
+        public List<WorkflowActionModel> Actions { get; init; } = new();
+    }
+
+    public record WorkflowConditionModel
+    {
+        public string Type { get; init; } = string.Empty;
+        public string Property { get; init; } = string.Empty;
+        public string Operator { get; init; } = string.Empty;
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public record WorkflowActionModel
+    {
+        public string Type { get; init; } = string.Empty;
+        
+        // Internal API
+        public string? RequestType { get; init; }
+        public string? PayloadTemplate { get; init; }
+        
+        // External API
+        public string? Method { get; init; }
+        public string? Url { get; init; }
+        public Dictionary<string, string>? Headers { get; init; }
+        public string? BodyTemplate { get; init; }
     }
 
     public record Entity

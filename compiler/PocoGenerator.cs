@@ -20,7 +20,7 @@ namespace Foundry.Schema.Compiler
             // Generate entities
             foreach (var entity in schema.Entities)
             {
-                var entityCode = GenerateEntity(entity, schema.Namespace);
+                var entityCode = GenerateEntity(entity, schema.Namespace, schema.Workflows);
                 result[entity.Name] = entityCode;
             }
 
@@ -76,6 +76,28 @@ namespace Foundry.Schema.Compiler
                 }
             }
 
+            // Generate Workflow Transition Trigger Commands & Handlers
+            if (schema.Workflows != null)
+            {
+                foreach (var wf in schema.Workflows)
+                {
+                    if (string.IsNullOrEmpty(wf.Entity)) continue;
+                    var boundEntity = schema.Entities?.FirstOrDefault(e => e.Name.Equals(wf.Entity, StringComparison.OrdinalIgnoreCase));
+                    if (boundEntity == null) continue;
+
+                    foreach (var trans in wf.Transitions)
+                    {
+                        if (string.IsNullOrEmpty(trans.Trigger)) continue;
+                        
+                        var cmdCode = GenerateTransitionCommand(trans, boundEntity, schema.Namespace);
+                        result[$"Commands/{trans.Trigger}"] = cmdCode;
+
+                        var handlerCode = GenerateTransitionHandler(trans, schema.Namespace);
+                        result[$"Handlers/{trans.Trigger}Handler"] = handlerCode;
+                    }
+                }
+            }
+
             return result;
         }
 
@@ -90,7 +112,7 @@ public enum {enumDef.Name}
 }}";
         }
 
-        private static string GenerateEntity(Entity entity, string @namespace)
+        private static string GenerateEntity(Entity entity, string @namespace, List<WorkflowModel> workflows)
         {
             var keyProperty = entity.Properties.FirstOrDefault(p => p.IsKey);
             var keyType = keyProperty?.Type ?? "ObjectId";
@@ -108,6 +130,10 @@ public enum {enumDef.Name}
             interfaces.Add("IVersionable");
             if (entity.SoftDelete)
                 interfaces.Add("ISoftDelete");
+
+            var hasWorkflow = workflows != null && workflows.Any(w => w.Entity.Equals(entity.Name, StringComparison.OrdinalIgnoreCase));
+            if (hasWorkflow)
+                interfaces.Add("IWorkflowStateful");
 
             var interfaceList = string.Join(", ", interfaces);
 
@@ -179,6 +205,13 @@ public enum {enumDef.Name}
                 properties.Add("    public DateTime? DeletedAt { get; init; }");
             }
 
+            if (hasWorkflow)
+            {
+                properties.Add("    public string CurrentState { get; set; } = string.Empty;");
+                properties.Add("    public string WorkflowId { get; set; } = string.Empty;");
+                properties.Add("    public string WorkflowVersion { get; set; } = string.Empty;");
+            }
+
             var propertyLines = string.Join("\n\n", properties);
             if (!string.IsNullOrEmpty(propertyLines))
                 propertyLines = "\n" + propertyLines + "\n";
@@ -202,6 +235,8 @@ public enum {enumDef.Name}
             var extraImports = needAttributes
                 ? "\nusing Foundry.Core.Attributes;"
                 : "";
+            if (hasWorkflow)
+                extraImports += "\nusing Foundry.Rules;";
 
             return $@"using System;
 using System.ComponentModel.DataAnnotations;
@@ -443,6 +478,72 @@ public class {ruleName} : IBusinessRule<{requestType}>
     {{
         // TODO: Implement custom business policy validation logic
         return Task.FromResult(RuleResult.Success());
+    }}
+}}
+";
+        }
+
+        private static string GenerateTransitionCommand(WorkflowTransitionModel transition, Entity entity, string @namespace)
+        {
+            var keyProperty = entity.Properties.FirstOrDefault(p => p.IsKey);
+            var keyType = keyProperty?.Type ?? "ObjectId";
+            if (keyType.Equals("ObjectId", StringComparison.OrdinalIgnoreCase))
+                keyType = "MongoDB.Bson.ObjectId";
+
+            return $@"using System;
+using MediatR;
+using Foundry.Rules;
+using MongoDB.Bson;
+
+namespace {@namespace}.Commands;
+
+/// <summary>
+/// Command to trigger the workflow transition '{transition.Name}' from '{transition.FromState}' to '{transition.ToState}'.
+/// </summary>
+public record {transition.Trigger} : IRequest, IWorkflowTransitionRequest
+{{
+    /// <summary>
+    /// Gets the unique ID of the target entity document.
+    /// </summary>
+    public string EntityId {{ get; init; }} = string.Empty;
+
+    /// <inheritdoc />
+    string IWorkflowTransitionRequest.EntityId => EntityId;
+
+    /// <inheritdoc />
+    public string EntityType => ""{entity.Name}"";
+
+    /// <inheritdoc />
+    public string TransitionId => ""{transition.Id}"";
+
+    /// <inheritdoc />
+    public string FromState => ""{transition.FromState}"";
+
+    /// <inheritdoc />
+    public string ToState => ""{transition.ToState}"";
+}}
+";
+        }
+
+        private static string GenerateTransitionHandler(WorkflowTransitionModel transition, string @namespace)
+        {
+            return $@"using System;
+using System.Threading;
+using System.Threading.Tasks;
+using MediatR;
+
+namespace {@namespace}.Handlers;
+
+/// <summary>
+/// Handler for {transition.Trigger} workflow state transition command.
+/// </summary>
+public class {transition.Trigger}Handler : IRequestHandler<{transition.Trigger}>
+{{
+    /// <inheritdoc />
+    public Task Handle({transition.Trigger} request, CancellationToken ct)
+    {{
+        // State updates, roles audits, guard evaluation, and logging are automatically processed by WorkflowTransitionBehavior.
+        return Task.CompletedTask;
     }}
 }}
 ";
