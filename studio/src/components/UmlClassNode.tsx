@@ -51,10 +51,10 @@ export const UmlClassNode: React.FC<any> = ({ data, selected }) => {
 
   return (
     <div 
-      className={`relative rounded-xl bg-white/95 dark:bg-slate-900/90 border-2 backdrop-blur-md transition-all shadow-xl min-w-[240px] overflow-hidden ${
+      className={`relative rounded-xl border-2 transition-all shadow-xl min-w-[240px] overflow-hidden ${
         selected 
-          ? 'border-sky-500 shadow-sky-500/20 scale-[1.02]' 
-          : 'border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-700 shadow-black/5 dark:shadow-black/40'
+          ? 'border-sky-500 shadow-lg ring-1 ring-sky-500 bg-white dark:bg-slate-900 scale-[1.02] shadow-sky-500/10' 
+          : 'border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-md shadow-black/5 dark:shadow-black/40 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white/90 dark:hover:bg-slate-900/85'
       }`}
     >
       {/* Header */}

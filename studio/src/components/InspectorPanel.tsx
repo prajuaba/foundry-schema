@@ -114,7 +114,7 @@ export const InspectorPanel: React.FC = () => {
   }, [selectedEdge, nodes]);
 
   return (
-    <div className="w-80 bg-white/90 dark:bg-slate-900/90 border-l border-slate-200 dark:border-slate-800 p-5 overflow-y-auto z-10 backdrop-blur-md flex flex-col gap-6">
+    <div className="w-80 glass-panel border-l p-5 overflow-y-auto z-10 flex flex-col gap-6 shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
         <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Property Inspector</h2>
         {selectedNode && (

@@ -596,15 +596,15 @@ export const StudioWorkspace: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans transition-colors duration-200">
       {/* Top Bar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white/90 border-b border-slate-200 dark:bg-slate-900/90 dark:border-slate-800 backdrop-blur-md z-10 print-hide transition-colors duration-200">
+      <div className="flex items-center justify-between px-6 py-3 glass-panel border-b z-10 print-hide transition-colors duration-200 shadow-sm">
         <div className="flex items-center gap-3">
-          <Settings className="w-6 h-6 text-sky-500 animate-spin-slow" />
-          <h1 className="text-lg font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
-            Foundry.Schema.Studio
+          <Settings className="w-5.5 h-5.5 text-sky-500 animate-spin-slow" />
+          <h1 className="text-base font-extrabold tracking-tight bg-gradient-to-r from-sky-400 via-sky-500 to-indigo-500 bg-clip-text text-transparent">
+            Foundry Schema Studio
           </h1>
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all cursor-pointer hover-lift"
             title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400 animate-pulse" /> : <Moon className="w-4 h-4 text-slate-600" />}
@@ -613,12 +613,12 @@ export const StudioWorkspace: React.FC = () => {
 
         <div className="flex items-center gap-2">
           {/* Designer Tabs */}
-          <div className="flex bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-0.5 rounded shadow-inner transition-colors duration-200">
+          <div className="flex bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-0.5 rounded-lg shadow-inner transition-colors duration-200">
             <button
               onClick={() => setActiveView('schema')}
-              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+              className={`px-4 py-1.75 text-xs rounded-md transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none hover-lift ${
                 activeView === 'schema' 
-                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-bold shadow-md shadow-sky-500/25 glow-sky' 
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -626,9 +626,9 @@ export const StudioWorkspace: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveView('api')}
-              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+              className={`px-4 py-1.75 text-xs rounded-md transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none hover-lift ${
                 activeView === 'api' 
-                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-bold shadow-md shadow-sky-500/25 glow-sky' 
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -636,9 +636,9 @@ export const StudioWorkspace: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveView('workflow')}
-              className={`px-3.5 py-1.5 text-xs rounded transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none ${
+              className={`px-4 py-1.75 text-xs rounded-md transition-all font-semibold flex items-center gap-1.5 cursor-pointer select-none hover-lift ${
                 activeView === 'workflow' 
-                  ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/10' 
+                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-bold shadow-md shadow-sky-500/25 glow-sky' 
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -746,7 +746,7 @@ export const StudioWorkspace: React.FC = () => {
           <>
             {/* Left Panel - Toolbox */}
             {!isFullScreen && (
-              <div className="w-64 bg-white/80 dark:bg-slate-900/50 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-6 z-10 backdrop-blur-md print-hide transition-colors duration-200">
+              <div className="w-64 glass-panel border-r p-4 flex flex-col gap-6 z-10 print-hide transition-colors duration-200 shadow-sm">
               <div>
                 <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Editor Tools</h2>
                 <div className="flex flex-col gap-1.5">
